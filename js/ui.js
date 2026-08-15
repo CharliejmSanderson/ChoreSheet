@@ -135,17 +135,75 @@ export function personChip(members, memberId) {
    ------------------------------------------------------------------------ */
 
 let openSheetNode = null;
+let savedScrollY = 0;
 
 export function closeSheet() {
   if (openSheetNode) {
     openSheetNode.remove();
     openSheetNode = null;
     document.removeEventListener('keydown', onSheetKey);
+    unlockBody();
   }
 }
 
 function onSheetKey(event) {
   if (event.key === 'Escape') closeSheet();
+}
+
+/** Freezes the page behind the sheet so a stray swipe can't reach it.
+ *
+ *  A translucent backdrop alone doesn't stop the page underneath from
+ *  scrolling — on iOS Safari that lets a swipe "escape" the sheet and land on
+ *  the real page, which can trigger Safari's own pull-to-refresh and reload
+ *  the tab. Pinning the body in place with position:fixed is the standard fix;
+ *  overscroll-behavior alone isn't reliably supported across iOS versions. */
+function lockBody() {
+  savedScrollY = window.scrollY;
+  Object.assign(document.body.style, {
+    position: 'fixed',
+    top: `-${savedScrollY}px`,
+    left: '0',
+    right: '0',
+  });
+}
+
+function unlockBody() {
+  Object.assign(document.body.style, { position: '', top: '', left: '', right: '' });
+  window.scrollTo(0, savedScrollY);
+}
+
+/** Makes `handle` a real drag-to-dismiss grip: follow the finger, and either
+ *  dismiss or snap back depending on how far it travelled. */
+function makeDraggable(panel, handle, onDismiss) {
+  let dragging = false;
+  let startY = 0;
+  let offset = 0;
+  const DISMISS_AFTER = 90; // px of downward drag that counts as "let go"
+
+  handle.addEventListener('pointerdown', (event) => {
+    dragging = true;
+    startY = event.clientY;
+    panel.style.transition = 'none';
+    handle.setPointerCapture(event.pointerId);
+  });
+
+  handle.addEventListener('pointermove', (event) => {
+    if (!dragging) return;
+    offset = Math.max(0, event.clientY - startY); // only allow dragging down
+    panel.style.transform = `translateY(${offset}px)`;
+  });
+
+  const release = () => {
+    if (!dragging) return;
+    dragging = false;
+    panel.style.transition = '';
+    if (offset > DISMISS_AFTER) onDismiss();
+    else panel.style.transform = '';
+    offset = 0;
+  };
+
+  handle.addEventListener('pointerup', release);
+  handle.addEventListener('pointercancel', release);
 }
 
 /**
@@ -155,12 +213,19 @@ function onSheetKey(event) {
 export function openSheet(build) {
   closeSheet();
 
+  const grip = h('div', { class: 'sheet-grip' });
+  // A bigger invisible zone around the grip, so it's an easy target to catch
+  // with a thumb rather than the few pixels the visible bar occupies.
+  const dragHandle = h('div', { class: 'sheet-drag-handle' }, grip);
+
+  const closeBtn = h('button', {
+    class: 'sheet-close', 'aria-label': 'Close', onclick: closeSheet,
+  }, icon('close', 16));
+
   const panel = h('div', {
-    class: 'sheet',
-    role: 'dialog',
-    'aria-modal': 'true',
+    class: 'sheet', role: 'dialog', 'aria-modal': 'true',
     onclick: (e) => e.stopPropagation(),
-  }, h('div', { class: 'sheet-grip' }));
+  }, dragHandle, closeBtn);
 
   const backdrop = h('div', { class: 'sheet-backdrop', onclick: closeSheet }, panel);
 
@@ -171,6 +236,8 @@ export function openSheet(build) {
   document.body.append(backdrop);
   document.addEventListener('keydown', onSheetKey);
   openSheetNode = backdrop;
+  lockBody();
+  makeDraggable(panel, dragHandle, closeSheet);
 
   // Move focus in so keyboard and screen-reader users land inside the sheet.
   const focusable = panel.querySelector('input, button, select');

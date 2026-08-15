@@ -197,42 +197,49 @@ name. That's what signs their name against anything they change.
 
 ## How the fairness works
 
-The app counts **how many times each person has done each chore**. When a chore
-needs allocating, whoever has done that particular one least often comes first.
-Do that for every chore, every week, and each person ends up doing each job
-about the same number of times.
+Every person has a running total: everything they've ever been assigned. When
+a chore needs allocating, whoever's total is lowest goes next — for every
+single job, not just once a week. That one rule does everything at once:
 
-**Every week is split as evenly as the numbers allow.** This is checked before
-anything else: 10 jobs across 5 people is 2 each, every time. When it doesn't
-divide evenly — say 11 jobs across 5 people — the split is 3/2/2/2/2, and the
-extra goes to whoever has done the fewest overall.
+**Every week is split as evenly as the numbers allow.** 10 jobs across 5
+people is 2 each, every time. When it doesn't divide evenly — say 11 jobs
+across 5 people — the split is 3/2/2/2/2, and the extra goes to whoever's most
+behind overall.
 
-Within that even split, the per-chore counts decide *which* chores each person
-gets. It isn't strictly "lowest count always wins", as that would make the
-roster completely predictable: anyone within one go of the lowest is in the
-running, and the pick among them is random.
+**It correctly handles chores only some people can do** (see Restricting a
+chore, below). Being excluded from a chore just means that person's total
+stays a little lower, which naturally puts them first in line for whatever
+they *are* eligible for — so it evens out rather than leaving them
+permanently behind.
+
+Within that, the per-chore counts decide *which* chores each person gets:
+whoever's done that particular one least comes first. It isn't strictly
+"lowest always wins" — that would make the roster completely predictable —
+so anyone within one go of the lowest is in the running, and the pick among
+them is random.
 
 One more rule keeps it varied: **nobody gets the same chore two weeks running**
 if someone else is equally due for it.
 
 Marking someone **away** takes them out entirely for that week; the others
 split the load evenly between them. The person who was away has done fewer
-overall, so they're first in line for the odd extra job in the weeks after.
+overall, so they're first in line for the following week's jobs.
 
-**Editing a week doesn't break any of this.** The counts are always recalculated
-from what people actually ended up doing, so swaps and reassignments are
-counted, not the original draw.
+**Editing a week doesn't break any of this.** The totals are always
+recalculated from what people actually ended up doing, so swaps and
+reassignments are counted, not the original draw.
 
 The **Tasks** tab shows the running tally: each person's total, and a
 breakdown of every chore with how many times they've done it.
 
 ### Drawing up a week
 
-Tap **Draw up this week** and you get two choices:
+Tap **Draw up this week** and you get three choices:
 
 - **Share them out for me** — the app allocates everything.
 - **I'll allocate them myself** — the week is created empty and you tap each
   chore to choose who does it.
+- **Cancel** — closes the sheet without changing anything.
 
 If you start allocating by hand and run out of patience, **Fill the rest** hands
 the remainder to the app. Anything you already chose is kept exactly as it is,
@@ -240,6 +247,20 @@ and the automatic pass balances around those choices rather than ignoring them.
 
 You can also leave a chore deliberately unallocated — open it and choose
 **Leave it unallocated**.
+
+**Redrawing an existing week** replaces its current list. Right afterwards, a
+banner offers **Undo** to put it back exactly as it was — this disappears the
+moment you make any other change to that week, since at that point there's no
+longer a single clear "before" to return to.
+
+### Restricting a chore
+
+A chore can be left open to **anyone**, or restricted to **adults only** or
+**kids only** — set this when adding or editing the chore. Whether a person
+counts as a "kid" for this purpose is set on their own profile (the "skips
+adults-only chores" toggle in Manage), and it works both ways: someone marked
+that way will never be given an adults-only chore, and will never be given a
+kids-only chore either if they're not marked that way.
 
 ### Notes on chores
 
@@ -249,6 +270,14 @@ the week list and when allocating it.
 
 Notes are saved with each week as it's drawn up, so changing a note later won't
 rewrite what past weeks said.
+
+### Who's making the change
+
+Once at least one person is in the family, editing anything — chores,
+assignments, swaps, redrawing a week — asks who you are first, if this device
+hasn't said already. That's what makes the Activity tab meaningful. The one
+exception is adding the very first person(s) to an empty family, since there's
+nobody to pick from yet.
 
 ---
 
@@ -260,9 +289,9 @@ very top of the file, each with a comment explaining what it does:
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `HISTORY_WEEKS` | 0 | How far back the counts look. 0 means all time, which is what makes the totals even out long-term. Set a number to make old history stop counting. |
-| `COUNT_TOLERANCE` | 1 | How close to the lowest count you have to be to still be in the running. 0 is strictest and most predictable; higher means more variety and slower evening-out. |
+| `COUNT_TOLERANCE` | 1 | How close to the lowest count you have to be to still be in the running for a specific chore. 0 is strictest and most predictable; higher means more variety and slower evening-out. |
 | `REPEAT_PENALTY_WEEKS` | 1 | How long before someone can get the same chore again. Set to 0 to allow repeats. |
-| `WEEKLY_TOLERANCE` | 0 | How uneven a single week may be. 0 means everyone gets the same number of jobs bar the remainder. Set to 1 to allow a lopsided week in exchange for faster catch-up after someone's been away. |
+| `TOTAL_TOLERANCE` | 0 | How close to the lowest overall total counts as "equally due" for the next job. This is what keeps a week's jobs split evenly — 0 is strictest. Raise it to 1 for a little more shuffle at the cost of a slightly less even split. |
 
 Nothing else in the file needs touching to change how the roster behaves.
 

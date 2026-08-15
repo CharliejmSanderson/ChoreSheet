@@ -156,10 +156,10 @@ function seedStarterData() {
     { id: localId(), name: 'Add your family', active: true, ageRestricted: false },
   ];
   data.chores = [
-    { id: localId(), name: 'Load the dishwasher', notes: '', frequency: 'daily', adultOnly: false, active: true },
-    { id: localId(), name: 'Walk the dog', notes: 'Before 8am on school days', frequency: 'daily', adultOnly: false, active: true },
-    { id: localId(), name: 'Clean the bathroom', notes: '', frequency: 'weekly', adultOnly: false, active: true },
-    { id: localId(), name: 'Bins out', notes: 'Tuesday night at the latest', frequency: 'weekly', adultOnly: false, active: true },
+    { id: localId(), name: 'Load the dishwasher', notes: '', frequency: 'daily', restriction: 'none', active: true },
+    { id: localId(), name: 'Walk the dog', notes: 'Before 8am on school days', frequency: 'daily', restriction: 'none', active: true },
+    { id: localId(), name: 'Clean the bathroom', notes: '', frequency: 'weekly', restriction: 'none', active: true },
+    { id: localId(), name: 'Bins out', notes: 'Tuesday night at the latest', frequency: 'weekly', restriction: 'none', active: true },
   ];
   data.weeks = [];
   data.log = [];
@@ -223,7 +223,7 @@ export const addChore = (chore) =>
     name: chore.name.trim(),
     notes: (chore.notes || '').trim(),
     frequency: chore.frequency === 'daily' ? 'daily' : 'weekly',
-    adultOnly: !!chore.adultOnly,
+    restriction: chore.restriction || 'none', // 'none' | 'adultOnly' | 'childOnly'
     active: true,
   });
 
@@ -249,12 +249,18 @@ export async function saveWeek(week) {
 }
 
 export async function updateWeekAssignments(weekId, assignments) {
+  return updateWeekFields(weekId, { assignments });
+}
+
+/** Restore more than just assignments in one write — used by "undo redraw",
+ *  which needs to put back both the assignments and who was away. */
+export async function updateWeekFields(weekId, patch) {
   if (mode === 'cloud') {
-    await fb.updateDoc(fb.doc(db, 'weeks', weekId), { assignments });
+    await fb.updateDoc(fb.doc(db, 'weeks', weekId), patch);
     return;
   }
   const week = data.weeks.find((w) => w.id === weekId);
-  if (week) week.assignments = assignments;
+  if (week) Object.assign(week, patch);
   writeLocal();
   notify();
 }
@@ -295,4 +301,4 @@ export function resetLocal() {
   try { localStorage.removeItem(LOCAL_KEY); } catch {}
   seedStarterData();
   notify();
-} 
+}

@@ -3,14 +3,28 @@
 
    HOW FAIRNESS WORKS
 
-   Every chore is tracked per person, per chore: "Sam has walked the dog 4
-   times, Ella 6". When a chore needs assigning, whoever has done that
-   particular chore least often comes first. Do that for every chore and each
-   person ends up doing each job a roughly equal number of times.
+   Every person has a running total: everything they've ever been assigned,
+   updated live as a week is built. Whoever's total is lowest goes next — for
+   every single job, not just once per week. That one rule does three things
+   at once: it keeps a week's jobs split as evenly as the numbers allow, it
+   sends the odd leftover job to whoever's most due, and it correctly handles
+   someone who's excluded from certain chores (see restrictionOf below),
+   because being excluded just means their total stays lower, which then makes
+   them next in line for whatever they ARE eligible for.
 
-   It isn't a strict "lowest count always wins" — that would make the roster
-   completely predictable. Anyone within COUNT_TOLERANCE of the lowest is in
-   the running, and the pick among them is random.
+   An earlier version of this tracked "how many jobs so far this week"
+   separately from the running total, resetting to zero every Monday. That
+   seemed reasonable but had a real bug: restricted chores got handed out
+   first, which pushed everyone else's weekly count up before an excluded
+   person even entered the running — so they were only ever catching up to
+   match the group, never getting a fair shot at the extra job. Using one
+   running total instead of two separate numbers closed that gap.
+
+   Within that, PER-CHORE fairness decides which chore each person gets:
+   whoever's done that particular chore least comes first. It isn't a strict
+   "lowest always wins" — that would make the roster completely predictable —
+   so anyone within COUNT_TOLERANCE of the lowest is in the running, and the
+   pick among them is random.
 
    This file is deliberately free of any UI or Firebase code. Everything here
    is a pure function, so the constants below are safe to tune on their own.
@@ -37,16 +51,15 @@ export const COUNT_TOLERANCE = 1;
  *  as there's another equally-due candidate. Set to 0 to switch off. */
 export const REPEAT_PENALTY_WEEKS = 1;
 
-/** How uneven a single week is allowed to be.
- *
- *  0 (the default) means everyone gets the same number of jobs, give or take
- *  the remainder when it doesn't divide evenly — 10 jobs across 5 people is
- *  2 each; 11 jobs is 3/2/2/2/2, and the extra goes to whoever has done the
- *  fewest overall.
- *
- *  Raise it to 1 to let the week be a little lopsided in exchange for faster
- *  catch-up after someone's been away. */
-export const WEEKLY_TOLERANCE = 0;
+/** How close someone's overall total must be to the lowest to still be
+ *  considered "equally due" for the next job. This is what keeps a week's
+ *  jobs split as evenly as possible.
+ *    0 (default) = strictly whoever is lowest goes next — 10 jobs across 5
+ *      people is 2 each, every time; 11 jobs is 3/2/2/2/2, extra to whoever's
+ *      most behind overall.
+ *  Raise it to 1 to allow a little more shuffle, at the cost of a slightly
+ *  less even split. */
+export const TOTAL_TOLERANCE = 0;
 
 /** Day keys, Monday-first. */
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -124,12 +137,26 @@ export function formatWeekRange(weekId) {
 
 /* ---------------------------------------------------------------------------
    ELIGIBILITY
+
+   A chore's restriction is one of: 'none', 'adultOnly', 'childOnly'.
+
+   Older saved data (chores and past week assignments) may only have a plain
+   `adultOnly: true/false` boolean rather than `restriction` — restrictionOf
+   reads either shape, so nothing needs migrating by hand.
    ------------------------------------------------------------------------ */
+
+export function restrictionOf(obj) {
+  if (obj?.restriction) return obj.restriction;
+  if (obj?.adultOnly) return 'adultOnly';
+  return 'none';
+}
 
 export function isEligible(member, chore, unavailableIds = []) {
   if (!member.active) return false;
   if (unavailableIds.includes(member.id)) return false;
-  if (chore.adultOnly && member.ageRestricted) return false;
+  const restriction = restrictionOf(chore);
+  if (restriction === 'adultOnly' && member.ageRestricted) return false;
+  if (restriction === 'childOnly' && !member.ageRestricted) return false;
   return true;
 }
 
@@ -233,7 +260,7 @@ export function expandInstances(chores) {
       choreId: chore.id,
       choreName: chore.name,
       notes: chore.notes || '',   // snapshotted, so past weeks keep the old note
-      adultOnly: !!chore.adultOnly,
+      restriction: restrictionOf(chore),
     };
 
     if (chore.frequency === 'daily') {
@@ -252,58 +279,44 @@ export function expandInstances(chores) {
 /**
  * Choose who gets one job.
  *
- * 1. Only people eligible for it (active, around, old enough).
- * 2. Of those, only the ones carrying the fewest jobs SO FAR THIS WEEK. This
- *    is what keeps the week evenly split — it's checked before anything else,
- *    so no one can be handed a third job while someone else still has one.
- * 3. Keep everyone within COUNT_TOLERANCE of the lowest count FOR THIS CHORE.
- *    Among people with the same weekly load, this decides *which* chore each
- *    of them ends up with.
+ * 1. Only people eligible for it (active, around, old enough — or young
+ *    enough, for a kids-only chore).
+ * 2. Keep everyone within TOTAL_TOLERANCE of the lowest running total. This
+ *    one check does the "even split" work — see the file header for why it
+ *    has to be the running total and not a separate weekly counter.
+ * 3. Within that, keep everyone within COUNT_TOLERANCE of the lowest count
+ *    FOR THIS SPECIFIC CHORE — this decides *which* chore each of them ends
+ *    up with.
  * 4. Prefer people who haven't had this chore in the last week or so.
- * 5. Prefer whoever has the lowest total across all chores. This is what sends
- *    the odd remaining job to whoever's done the fewest overall.
- * 6. Pick at random from whoever's still standing.
+ * 5. Pick at random from whoever's still standing.
  */
-function pickAssignee({
-  instance, members, counts, unavailable, history, weekId, rng, weekLoad = {},
-}) {
-  const chore = { adultOnly: instance.adultOnly };
+function pickAssignee({ instance, members, counts, unavailable, history, weekId, rng }) {
+  const chore = { restriction: instance.restriction };
   let pool = members.filter((m) => isEligible(m, chore, unavailable));
   if (pool.length === 0) return null;
 
-  // 2 — even split first. Everything below only breaks ties within this group.
-  const lightest = Math.min(...pool.map((m) => weekLoad[m.id] ?? 0));
-  pool = pool.filter((m) => (weekLoad[m.id] ?? 0) <= lightest + WEEKLY_TOLERANCE);
+  const lowestTotal = Math.min(...pool.map((m) => counts[m.id]?.total || 0));
+  pool = pool.filter((m) => (counts[m.id]?.total || 0) <= lowestTotal + TOTAL_TOLERANCE);
 
-  // 3 — lowest count of this specific chore
   const lowest = Math.min(...pool.map((m) => countFor(counts, m.id, instance.choreId)));
   pool = pool.filter(
     (m) => countFor(counts, m.id, instance.choreId) <= lowest + COUNT_TOLERANCE);
 
-  // 4 — avoid an immediate repeat where we can afford to
   if (REPEAT_PENALTY_WEEKS > 0 && pool.length > 1) {
     const fresh = pool.filter(
       (m) => weeksSinceChore(history, m.id, instance.choreId, weekId) > REPEAT_PENALTY_WEEKS);
     if (fresh.length > 0) pool = fresh;
   }
 
-  // 5 — tie-break on overall workload
-  if (pool.length > 1) {
-    const lowestTotal = Math.min(...pool.map((m) => counts[m.id]?.total || 0));
-    pool = pool.filter((m) => (counts[m.id]?.total || 0) <= lowestTotal + COUNT_TOLERANCE);
-  }
-
-  // 6 — random among equals
   return pool[Math.floor(rng() * pool.length)];
 }
 
-/** Register one assignment against the running tallies. */
-function tally(counts, weekLoad, memberId, choreId) {
+/** Register one assignment against the running totals. */
+function tally(counts, memberId, choreId) {
   if (!memberId) return;
   if (!counts[memberId]) counts[memberId] = emptyCount();
   counts[memberId].total += 1;
   counts[memberId].byChore[choreId] = (counts[memberId].byChore[choreId] || 0) + 1;
-  weekLoad[memberId] = (weekLoad[memberId] || 0) + 1;
 }
 
 /** Read an existing assignee out of a week record, for a given job. */
@@ -345,12 +358,10 @@ export function generateWeek({
 }) {
   const instances = expandInstances(chores);
 
-  // Counts as they stand before this week. Anyone who's been away naturally has
-  // lower counts, so they come up first when the odd job needs a home.
+  // Counts as they stand before this week. Anyone who's been away — or
+  // structurally excluded from some chores — naturally has a lower total, so
+  // they come up first for whatever they're eligible for.
   const counts = computeCounts(history, members, { before: weekId });
-
-  const weekLoad = {};
-  for (const m of members) weekLoad[m.id] = 0;
 
   // Anything already assigned by hand is locked in first and counted, so the
   // automatic pass balances around those choices rather than ignoring them.
@@ -361,7 +372,7 @@ export function generateWeek({
     const existing = fill === 'auto' ? undefined : preservedAssignee(preserve, instance);
 
     if (existing) {
-      tally(counts, weekLoad, existing, instance.choreId);
+      tally(counts, existing, instance.choreId);
       assigned.push({ ...instance, assignedTo: existing });
     } else if (fill === 'manual') {
       assigned.push({ ...instance, assignedTo: null });
@@ -372,7 +383,7 @@ export function generateWeek({
 
   // Order matters. Two things go first because they have the least room to
   // manoeuvre, and leaving them till last forces bad picks:
-  //   - jobs fewer people are allowed to do (adults-only)
+  //   - jobs fewer people are allowed to do (adult-only or kids-only)
   //   - chores with fewer jobs to give out; a weekly chore has exactly one
   //     chance to land fairly, whereas a daily chore has seven and can spread
   //     itself around whatever's left
@@ -383,7 +394,7 @@ export function generateWeek({
   }
 
   const eligibleCount = (instance) =>
-    members.filter((m) => isEligible(m, { adultOnly: instance.adultOnly }, unavailable)).length;
+    members.filter((m) => isEligible(m, { restriction: instance.restriction }, unavailable)).length;
 
   toFill.sort((a, b) =>
     (eligibleCount(a) - eligibleCount(b))
@@ -391,10 +402,8 @@ export function generateWeek({
     || (rng() - 0.5));
 
   for (const instance of toFill) {
-    const person = pickAssignee({
-      instance, members, counts, unavailable, history, weekId, rng, weekLoad,
-    });
-    if (person) tally(counts, weekLoad, person.id, instance.choreId);
+    const person = pickAssignee({ instance, members, counts, unavailable, history, weekId, rng });
+    if (person) tally(counts, person.id, instance.choreId);
     assigned.push({ ...instance, assignedTo: person ? person.id : null });
   }
 
@@ -406,7 +415,7 @@ export function generateWeek({
         choreId: inst.choreId,
         choreName: inst.choreName,
         notes: inst.notes || '',
-        adultOnly: inst.adultOnly,
+        restriction: inst.restriction,
         type: inst.type,
         ...(inst.type === 'daily' ? { days: {} } : { assignedTo: null }),
       });

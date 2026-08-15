@@ -12,12 +12,12 @@ import {
   getWho, setWho, whoName,
   addMember, updateMember, removeMember,
   addChore, updateChore, removeChore,
-  saveWeek, updateWeekAssignments, logActivity, resetLocal,
+  saveWeek, updateWeekAssignments, updateWeekFields, logActivity, resetLocal,
 } from './store.js';
 
 import {
   generateWeek, weekIdFor, nextWeekId, prevWeekId,
-  formatWeekRange, DAY_LABELS, unassignedCount,
+  formatWeekRange, DAY_LABELS, unassignedCount, restrictionOf,
 } from './schedule.js';
 
 import { downloadICS } from './ics.js';
@@ -37,6 +37,9 @@ const state = {
   tab: 'week',
   weekId: weekIdFor(),
   mineOnly: false,
+  // Set right after a redraw so the week view can offer one step back. Holds
+  // a snapshot of the week as it was immediately before that redraw.
+  undo: null,
 };
 
 const TABS = [
@@ -111,6 +114,17 @@ const actions = {
    *      'manual' — create it empty, to be allocated by hand
    */
   async runGenerate(weekId, unavailable, isRedraw, fill = 'auto') {
+    // If this overwrites an existing week, keep a copy so it can be undone —
+    // a redraw is the one destructive action in the app with no other way back.
+    const previous = isRedraw ? data.weeks.find((w) => w.id === weekId) : null;
+    const undoSnapshot = previous
+      ? {
+          weekId,
+          assignments: JSON.parse(JSON.stringify(previous.assignments || [])),
+          unavailable: [...(previous.unavailable || [])],
+        }
+      : null;
+
     const week = generateWeek({
       weekId,
       chores: data.chores,
@@ -133,6 +147,7 @@ const actions = {
     });
 
     state.weekId = weekId;
+    state.undo = undoSnapshot;
     render();
 
     if (fill === 'manual') {
@@ -147,8 +162,29 @@ const actions = {
       : (isRedraw ? 'Week redrawn' : 'Week drawn up'));
   },
 
+  /** Puts a redrawn week back exactly as it was, one step, right after. */
+  async undoRedraw() {
+    const snap = state.undo;
+    if (!snap) return;
+    state.undo = null;
+
+    await updateWeekFields(snap.weekId, {
+      assignments: snap.assignments,
+      unavailable: snap.unavailable,
+    });
+    await logActivity({
+      action: 'Undid a redraw',
+      context: formatWeekRange(snap.weekId),
+      weekId: snap.weekId,
+    });
+
+    render();
+    toast('Redraw undone');
+  },
+
   /** Finish a part-allocated week, keeping every choice already made. */
   async fillRest(weekId) {
+    state.undo = null;
     const existing = data.weeks.find((w) => w.id === weekId);
     if (!existing) return;
 
@@ -195,6 +231,7 @@ const actions = {
 
   async reassign(weekId, choreId, day, memberId, previous) {
     if (memberId === previous) return;
+    if (state.undo?.weekId === weekId) state.undo = null;
 
     const week = data.weeks.find((w) => w.id === weekId);
     if (!week) return;
@@ -235,6 +272,8 @@ const actions = {
   },
 
   async swap(weekId, slotA, slotB) {
+    if (state.undo?.weekId === weekId) state.undo = null;
+
     const week = data.weeks.find((w) => w.id === weekId);
     if (!week) return;
 
@@ -341,7 +380,7 @@ const actions = {
           name: draft.name.trim(),
           notes: (draft.notes || '').trim(),
           frequency: draft.frequency,
-          adultOnly: draft.adultOnly,
+          restriction: draft.restriction,
           active: draft.active,
         };
 
@@ -352,8 +391,9 @@ const actions = {
             changes.push(payload.notes ? `note: "${payload.notes}"` : 'note removed');
           }
           if (payload.frequency !== chore.frequency) changes.push(`now ${payload.frequency}`);
-          if (payload.adultOnly !== chore.adultOnly) {
-            changes.push(payload.adultOnly ? 'now adults only' : 'no longer adults only');
+          if (payload.restriction !== restrictionOf(chore)) {
+            const labels = { none: 'anyone', adultOnly: 'adults only', childOnly: 'kids only' };
+            changes.push(`now ${labels[payload.restriction]}`);
           }
           if (payload.active !== chore.active) changes.push(payload.active ? 'back in rotation' : 'paused');
 
@@ -396,7 +436,7 @@ const actions = {
 
   /* --- Identity --------------------------------------------------------- */
 
-  openIdentity(dismissible = true) {
+  openIdentity(dismissible = true, onAfterPick) {
     identitySheet({
       members: data.members,
       current: getWho(),
@@ -405,6 +445,7 @@ const actions = {
         setWho(memberId);
         render();
         toast(`Hello, ${nameOf(memberId)}`);
+        if (onAfterPick) onAfterPick();
       },
     });
   },
@@ -421,23 +462,100 @@ const actions = {
 };
 
 /* ---------------------------------------------------------------------------
+   REQUIRE IDENTITY BEFORE EDITING
+
+   Once at least one person exists in the family, every action that changes
+   shared data has to know who's making the change — that's the whole point
+   of the activity log. The one exception is adding the very first person(s):
+   with nobody in the family yet, there's nobody to pick from, so that has to
+   stay open or the app could never be set up in the first place.
+
+   This wraps the relevant actions after the fact rather than guarding inside
+   each one, so the full list of what requires identity is visible in one
+   place instead of scattered through the file.
+   ------------------------------------------------------------------------ */
+
+const REQUIRES_IDENTITY = [
+  'openReassign', 'openSwap', 'openGenerate', 'openRegenerate',
+  'fillRest', 'undoRedraw', 'openPerson', 'openChore',
+];
+
+for (const name of REQUIRES_IDENTITY) {
+  const original = actions[name];
+  actions[name] = (...args) => {
+    const familyExists = data.members.some((m) => m.active);
+    if (!familyExists || getWho()) { original(...args); return; }
+    actions.openIdentity(true, () => original(...args));
+  };
+}
+
+/* ---------------------------------------------------------------------------
    RENDER
+
+   The topbar and tab bar are built ONCE and then patched in place — only their
+   small changing details (the who-button, which tab is active) get updated.
+   Only the main content area is torn down and rebuilt each time. Previously
+   the whole app — header, nav, everything — was destroyed and recreated on
+   every single change, which is what caused the visible flash: for a moment
+   the entire screen was blank before it repainted.
    ------------------------------------------------------------------------ */
 
 const app = document.getElementById('app');
+let topbarEl = null;
+let whoBtnEl = null;
+let mainEl = null;
+let tabbarEl = null;
 
-function render() {
-  const ctx = context();
+function buildShell() {
+  whoBtnEl = h('button', { class: 'who-btn', onclick: () => actions.openIdentity() });
+
+  topbarEl = h('header', { class: 'topbar' },
+    h('div', { class: 'topbar-inner' },
+      h('div', { class: 'brand' }, 'Chores', h('span', {}, 'family roster')),
+      whoBtnEl));
+
+  mainEl = h('main', { id: 'view' });
+
+  tabbarEl = h('nav', { class: 'tabbar', 'aria-label': 'Sections' });
+  for (const tab of TABS) {
+    tabbarEl.append(h('button', {
+      class: 'tab',
+      'data-tab': tab.id,
+      onclick: () => actions.setTab(tab.id),
+    }, icon(tab.icon), h('span', {}, tab.label)));
+  }
 
   clear(app);
-  app.append(topbar(ctx));
+  app.append(topbarEl, mainEl, tabbarEl);
+}
 
-  const main = h('main', { id: 'view' });
+function updateShell(ctx) {
+  const member = data.members.find((m) => m.id === ctx.who);
+  clear(whoBtnEl);
+  whoBtnEl.append(
+    member
+      ? personDot(data.members, member.id, member.name)
+      : h('span', { class: 'dot', style: { '--tape': 'var(--ink-3)' } }, '?'),
+    member ? member.name : 'Who are you?');
+
+  for (const btn of tabbarEl.querySelectorAll('.tab')) {
+    if (btn.dataset.tab === state.tab) btn.setAttribute('aria-current', 'page');
+    else btn.removeAttribute('aria-current');
+  }
+}
+
+function render() {
+  if (!topbarEl) buildShell();
+
+  const ctx = context();
+  updateShell(ctx);
+
+  clear(mainEl);
 
   // Only shown while Firebase hasn't been set up — the data isn't shared yet,
   // and someone needs to know that before they rely on it.
   if (mode === 'local') {
-    main.append(h('div', { class: 'banner' },
+    mainEl.append(h('div', { class: 'banner' },
       icon('warn', 17),
       h('div', {},
         h('strong', {}, 'Preview mode. '),
@@ -445,43 +563,10 @@ function render() {
         + 'Add your Firebase details in js/config.js to sync the family.')));
   }
 
-  if (state.tab === 'week') main.append(weekView(ctx));
-  else if (state.tab === 'tasks') main.append(tasksView(ctx));
-  else if (state.tab === 'activity') main.append(activityView(ctx));
-  else main.append(manageView(ctx));
-
-  app.append(main);
-  app.append(tabbar());
-}
-
-function topbar(ctx) {
-  const who = ctx.who;
-  const member = data.members.find((m) => m.id === who);
-
-  return h('header', { class: 'topbar' },
-    h('div', { class: 'topbar-inner' },
-      h('div', { class: 'brand' }, 'Chores', h('span', {}, 'family roster')),
-      h('button', {
-        class: 'who-btn',
-        onclick: () => actions.openIdentity(),
-      },
-        member
-          ? personDot(data.members, member.id, member.name)
-          : h('span', { class: 'dot', style: { '--tape': 'var(--ink-3)' } }, '?'),
-        member ? member.name : 'Who are you?')));
-}
-
-function tabbar() {
-  const nav = h('nav', { class: 'tabbar', 'aria-label': 'Sections' });
-
-  for (const tab of TABS) {
-    nav.append(h('button', {
-      class: 'tab',
-      'aria-current': state.tab === tab.id ? 'page' : null,
-      onclick: () => actions.setTab(tab.id),
-    }, icon(tab.icon), h('span', {}, tab.label)));
-  }
-  return nav;
+  if (state.tab === 'week') mainEl.append(weekView(ctx));
+  else if (state.tab === 'tasks') mainEl.append(tasksView(ctx));
+  else if (state.tab === 'activity') mainEl.append(activityView(ctx));
+  else mainEl.append(manageView(ctx));
 }
 
 /* ---------------------------------------------------------------------------
