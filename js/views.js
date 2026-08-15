@@ -11,8 +11,10 @@ import { h, icon, personChip, personDot, tapeVar, timeAgo, openSheet, closeSheet
 import {
   DAYS, DAY_LABELS, HISTORY_WEEKS,
   formatWeekRange, datesOfWeek, weekIdFor, computeCounts, countFor,
-  isEligible, toISODate, unassignedCount, totalJobs,
+  isEligible, restrictionOf, toISODate, unassignedCount, totalJobs,
 } from './schedule.js';
+
+const RESTRICTION_LABEL = { adultOnly: 'Adults only', childOnly: 'Kids only' };
 
 /* ---------------------------------------------------------------------------
    WEEK VIEW — the home screen
@@ -29,6 +31,18 @@ export function weekView(ctx) {
   if (!week) {
     wrap.append(notGeneratedYet(ctx));
     return wrap;
+  }
+
+  // A redraw just happened to this exact week — offer one step back.
+  if (state.undo?.weekId === week.id) {
+    wrap.append(h('div', { class: 'banner', style: { 'align-items': 'center' } },
+      icon('warn', 17),
+      h('div', { class: 'grow' }, 'Week redrawn just now.'),
+      h('button', {
+        class: 'btn btn-ghost btn-sm',
+        style: { flex: 'none' },
+        onclick: () => actions.undoRedraw(),
+      }, 'Undo')));
   }
 
   // A part-filled week needs an obvious way to finish it off.
@@ -85,7 +99,7 @@ export function weekView(ctx) {
         ? 'Enjoy it. Switch to Everyone to see the full list.'
         : 'Add some chores under Manage, then draw the week up again.')));
   } else {
-    const list = h('div', { class: 'card card-flush stagger' });
+    const list = h('div', { class: 'card card-flush' });
     for (const a of visible) list.append(choreRow(ctx, week, a));
     wrap.append(list);
   }
@@ -133,9 +147,10 @@ function notGeneratedYet(ctx) {
 function choreRow(ctx, week, assignment) {
   const { members, actions, state } = ctx;
 
+  const restriction = restrictionOf(assignment);
   const meta = h('div', { class: 'chore-meta' },
     h('span', {}, assignment.type === 'daily' ? 'Different each day' : 'All week'),
-    assignment.adultOnly ? h('span', {}, '· Adults only') : null);
+    restriction !== 'none' ? h('span', {}, `· ${RESTRICTION_LABEL[restriction]}`) : null);
 
   const note = assignment.notes
     ? h('div', { class: 'chore-note' }, h('span', { 'aria-hidden': 'true' }, '!'), assignment.notes)
@@ -187,7 +202,11 @@ function weekActions(ctx, week) {
     h('button', { class: 'btn btn-ghost btn-sm', onclick: () => actions.openExport(week.id) },
       icon('download', 16), 'Add to calendar'),
     h('button', { class: 'btn btn-quiet btn-sm', onclick: () => actions.openRegenerate(week.id) },
-      'Redraw week'));
+      'Redraw week'),
+    h('button', {
+      class: 'btn btn-quiet btn-sm btn-danger',
+      onclick: () => actions.deleteWeek(week.id),
+    }, icon('trash', 15), 'Delete week'));
 }
 
 /* ---------------------------------------------------------------------------
@@ -382,12 +401,13 @@ export function manageView(ctx) {
   } else {
     const list = h('div', { class: 'card card-flush' });
     for (const chore of [...chores].sort((a, b) => a.name.localeCompare(b.name))) {
+      const restriction = restrictionOf(chore);
       list.append(h('div', { class: `list-row${chore.active ? '' : ' is-off'}` },
         h('div', { class: 'grow' },
           h('div', { style: { 'font-weight': '600' } }, chore.name),
           h('div', { class: 'small muted' },
             [chore.frequency === 'daily' ? 'Rotates daily' : 'One person all week',
-             chore.adultOnly ? 'adults only' : null,
+             restriction !== 'none' ? RESTRICTION_LABEL[restriction].toLowerCase() : null,
              chore.active ? null : 'paused'].filter(Boolean).join(' · ')),
           chore.notes ? h('div', { class: 'chore-note' },
             h('span', { 'aria-hidden': 'true' }, '!'), chore.notes) : null),
@@ -414,7 +434,8 @@ export function manageView(ctx) {
 
 /** Pick a person for a chore, or for one day of one. */
 export function reassignSheet({ week, assignment, day, members, current, onPick }) {
-  const chore = { adultOnly: assignment.adultOnly };
+  const restriction = restrictionOf(assignment);
+  const chore = { restriction };
 
   return openSheet(() => [
     h('h2', {}, assignment.choreName),
@@ -427,6 +448,10 @@ export function reassignSheet({ week, assignment, day, members, current, onPick 
     h('div', { class: 'pick-list' },
       members.map((member) => {
         const eligible = isEligible(member, chore, week.unavailable || []);
+        const restrictionReason =
+          (restriction === 'adultOnly' && member.ageRestricted) ? 'Adults only'
+          : (restriction === 'childOnly' && !member.ageRestricted) ? 'Kids only'
+          : '';
         return h('button', {
           class: `pick${eligible ? '' : ' is-disabled'}`,
           'aria-pressed': String(member.id === current),
@@ -439,7 +464,7 @@ export function reassignSheet({ week, assignment, day, members, current, onPick 
             member.id === current ? 'Doing it'
               : !member.active ? 'Paused'
               : (week.unavailable || []).includes(member.id) ? 'Away'
-              : member.ageRestricted && assignment.adultOnly ? 'Adults only' : ''));
+              : restrictionReason));
       })),
     current
       ? h('button', {
@@ -491,7 +516,11 @@ export function generateSheet({ weekId, members, existing, onConfirm }) {
         }, 'I\'ll allocate them myself'),
         h('p', { class: 'small muted', style: { margin: '2px 0 0', 'text-align': 'center' } },
           'Allocating yourself? You can hand out as many as you like, then let the '
-          + 'app finish the rest.')),
+          + 'app finish the rest.'),
+        h('button', {
+          class: 'btn btn-quiet btn-block',
+          onclick: close,
+        }, 'Cancel')),
     ];
   });
 }
@@ -657,7 +686,7 @@ export function choreSheet({ chore, onSave, onDelete }) {
     name: chore?.name || '',
     notes: chore?.notes || '',
     frequency: chore?.frequency || 'weekly',
-    adultOnly: !!chore?.adultOnly,
+    restriction: chore ? restrictionOf(chore) : 'none',
     active: chore ? chore.active !== false : true,
   };
 
@@ -688,6 +717,22 @@ export function choreSheet({ chore, onSave, onDelete }) {
     weeklyBtn.addEventListener('click', () => setFreq('weekly'));
     dailyBtn.addEventListener('click', () => setFreq('daily'));
 
+    // A chore can't sensibly be restricted to adults AND to kids at once, so
+    // this is one three-way choice rather than two independent switches.
+    const anyoneBtn = h('button', { 'aria-pressed': String(draft.restriction === 'none') }, 'Anyone');
+    const adultBtn = h('button', { 'aria-pressed': String(draft.restriction === 'adultOnly') }, 'Adults only');
+    const kidBtn = h('button', { 'aria-pressed': String(draft.restriction === 'childOnly') }, 'Kids only');
+
+    const setRestriction = (value) => {
+      draft.restriction = value;
+      anyoneBtn.setAttribute('aria-pressed', String(value === 'none'));
+      adultBtn.setAttribute('aria-pressed', String(value === 'adultOnly'));
+      kidBtn.setAttribute('aria-pressed', String(value === 'childOnly'));
+    };
+    anyoneBtn.addEventListener('click', () => setRestriction('none'));
+    adultBtn.addEventListener('click', () => setRestriction('adultOnly'));
+    kidBtn.addEventListener('click', () => setRestriction('childOnly'));
+
     return [
       h('h2', {}, editing ? 'Edit chore' : 'Add a chore'),
       h('div', { class: 'stack', style: { 'margin-top': '14px' } },
@@ -703,14 +748,12 @@ export function choreSheet({ chore, onSave, onDelete }) {
           h('label', {}, 'How often'),
           h('div', { class: 'seg-control' }, weeklyBtn, dailyBtn)),
 
-        h('label', { class: 'switch' },
-          h('div', {},
-            h('div', { style: { 'font-weight': '600' } }, 'Adults only'),
-            h('div', { class: 'small muted' }, 'Never given to anyone marked as skipping these')),
-          h('input', {
-            type: 'checkbox', checked: draft.adultOnly,
-            onchange: (e) => { draft.adultOnly = e.target.checked; },
-          })),
+        h('div', { class: 'field' },
+          h('label', {}, 'Who can do it'),
+          h('div', { class: 'seg-control' }, anyoneBtn, adultBtn, kidBtn),
+          h('div', { class: 'small muted' },
+            'Adults only skips anyone marked "skips adults-only chores". Kids only is the reverse — '
+            + 'only given to people marked that way.')),
 
         h('label', { class: 'switch' },
           h('div', {},

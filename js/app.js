@@ -12,7 +12,7 @@ import {
   getWho, setWho, whoName,
   addMember, updateMember, removeMember,
   addChore, updateChore, removeChore,
-  saveWeek, updateWeekAssignments, updateWeekFields, logActivity, resetLocal,
+  saveWeek, updateWeekAssignments, updateWeekFields, removeWeek, logActivity, resetLocal,
 } from './store.js';
 
 import {
@@ -210,6 +210,34 @@ const actions = {
     });
 
     toast('Redraw undone');
+  },
+
+  /** Removes a week completely — including from the fairness history, so
+   *  it stops counting toward who's due for what. Confirm first, same as
+   *  deleting a person or a chore; only the actual write gets batched, so a
+   *  long pause on the confirmation doesn't hold up anyone else's phone. */
+  async deleteWeek(weekId) {
+    const week = data.weeks.find((w) => w.id === weekId);
+    if (!week) return;
+
+    const ok = await confirmSheet({
+      title: 'Delete this week?',
+      body: `This removes ${formatWeekRange(weekId)} completely, including from everyone's `
+        + 'history — it will no longer count toward who\'s due for what. This can\'t be undone.',
+      confirmLabel: 'Delete week',
+      danger: true,
+    });
+    if (!ok) return;
+
+    if (state.undo?.weekId === weekId) state.undo = null;
+    await batched(async () => {
+      await removeWeek(weekId);
+      await logActivity({
+        action: 'Deleted a week',
+        context: formatWeekRange(weekId),
+      });
+      toast('Week deleted');
+    })();
   },
 
   /** Finish a part-allocated week, keeping every choice already made. */
@@ -523,7 +551,7 @@ for (const name of BATCH_RENDER) {
 
 const REQUIRES_IDENTITY = [
   'openReassign', 'openSwap', 'openGenerate', 'openRegenerate',
-  'fillRest', 'undoRedraw', 'openPerson', 'openChore',
+  'fillRest', 'undoRedraw', 'deleteWeek', 'openPerson', 'openChore',
 ];
 
 for (const name of REQUIRES_IDENTITY) {
