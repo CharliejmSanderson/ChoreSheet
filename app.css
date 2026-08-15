@@ -1,0 +1,775 @@
+/* ============================================================================
+   app.css
+
+   Design notes, so future edits stay coherent:
+
+   The app is meant to be glanced at on a phone stuck to a fridge routine — the
+   question is always "what am I doing this week?". So the organising idea is
+   COLOUR-CODED LABEL TAPE: every person owns a colour, and that colour is the
+   fastest way to find yourself in a list. Colours are assigned by position in
+   the family list, so they're stable.
+
+   Surfaces are a cool appliance-white rather than warm paper; the app lives in
+   a kitchen, not a notebook. Type pairs a slightly quirky grotesque for
+   headings with a clean sans for reading and a mono for anything numeric —
+   weights and scores read as data, not prose.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   TOKENS
+   ------------------------------------------------------------------------ */
+
+:root {
+  /* Surfaces & ink */
+  --bg: #edf1ef;
+  --surface: #ffffff;
+  --surface-sunk: #f5f8f6;
+  --ink: #131e1b;
+  --ink-2: #5d6e69;
+  --ink-3: #8b9a95;
+  --line: #dbe4e0;
+  --line-strong: #c3d0cb;
+
+  /* Person "label tape" colours, assigned by list position */
+  --tape-0: #c2185b;
+  --tape-1: #1e6fa8;
+  --tape-2: #d98200;
+  --tape-3: #2e7d52;
+  --tape-4: #6a4ca8;
+  --tape-5: #b3452f;
+  --tape-6: #0f7f8c;
+  --tape-7: #8a6d1f;
+
+  /* Feedback */
+  --warn-bg: #fff4e0;
+  --warn-line: #e8c98a;
+  --warn-ink: #7a5312;
+
+  /* Type */
+  --font-display: 'Bricolage Grotesque', 'Trebuchet MS', system-ui, sans-serif;
+  --font-body: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'DM Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Rhythm */
+  --gap: 12px;
+  --pad: 16px;
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shell: 620px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Stops the whole page rubber-banding like a webpage inside the installed app */
+body {
+  min-height: 100vh;
+  min-height: 100dvh; /* dvh accounts for Safari's collapsing toolbar */
+  overscroll-behavior-y: none;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+button, input, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2.5px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ---------------------------------------------------------------------------
+   SHELL
+   ------------------------------------------------------------------------ */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  padding: calc(env(safe-area-inset-top) + 10px) var(--pad) 10px;
+}
+
+.topbar-inner {
+  max-width: var(--shell);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.25rem;
+  letter-spacing: -0.03em;
+}
+
+.brand span {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: -2px;
+}
+
+.who-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 5px 12px 5px 6px;
+  cursor: pointer;
+  font-size: 0.86rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+main {
+  max-width: var(--shell);
+  margin: 0 auto;
+  padding: var(--pad) var(--pad) 96px;
+}
+
+/* ---------------------------------------------------------------------------
+   BOTTOM NAV
+   ------------------------------------------------------------------------ */
+
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line);
+  padding: 6px 8px calc(env(safe-area-inset-bottom) + 6px);
+}
+
+.tab {
+  flex: 1 1 0;
+  max-width: 140px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 4px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--ink-3);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.tab svg { width: 21px; height: 21px; stroke-width: 1.8; }
+.tab[aria-current='page'] { color: var(--ink); }
+.tab[aria-current='page'] svg { stroke-width: 2.4; }
+
+/* ---------------------------------------------------------------------------
+   BUILDING BLOCKS
+   ------------------------------------------------------------------------ */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--pad);
+  margin-bottom: var(--gap);
+}
+
+.card-flush { padding: 0; overflow: hidden; }
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap);
+  margin: 22px 0 10px;
+}
+
+.section-head:first-child { margin-top: 0; }
+
+.section-head h2 { font-size: 1.02rem; }
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.muted { color: var(--ink-2); }
+.small { font-size: 0.85rem; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: #fff;
+  border-radius: 999px;
+  padding: 11px 18px;
+  font-weight: 650;
+  font-size: 0.92rem;
+  cursor: pointer;
+  transition: transform 0.08s ease, opacity 0.15s ease;
+}
+
+.btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-ghost {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line-strong);
+  font-weight: 600;
+}
+
+.btn-quiet {
+  background: none;
+  border-color: transparent;
+  color: var(--ink-2);
+  padding: 8px 10px;
+}
+
+.btn-danger { color: #a11d2e; }
+
+.btn-sm { padding: 7px 13px; font-size: 0.83rem; }
+.btn-block { display: flex; width: 100%; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.row-between { justify-content: space-between; }
+.stack { display: flex; flex-direction: column; gap: var(--gap); }
+.wrap { flex-wrap: wrap; }
+.grow { flex: 1 1 auto; min-width: 0; }
+
+/* ---------------------------------------------------------------------------
+   PERSON CHIPS — the colour-coding that carries the whole interface
+   ------------------------------------------------------------------------ */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  /* Plain values first: older Safari ignores the color-mix lines below and
+     keeps these, so chips stay readable rather than turning invisible. */
+  background: var(--surface-sunk);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--tape) 12%, var(--surface));
+  color: color-mix(in srgb, var(--tape) 72%, var(--ink));
+  border: 1px solid color-mix(in srgb, var(--tape) 30%, transparent);
+  border-radius: 999px;
+  padding: 3px 11px 3px 4px;
+  font-size: 0.82rem;
+  font-weight: 650;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.chip-name { overflow: hidden; text-overflow: ellipsis; }
+
+.dot {
+  flex: none;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: var(--tape);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.chip-unassigned {
+  --tape: var(--ink-3);
+  font-style: italic;
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+   THE WEEK LIST
+   ------------------------------------------------------------------------ */
+
+.week-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.week-nav h1 { font-size: 1.32rem; }
+
+.week-nav .when {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.nav-btn {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.nav-btn svg { width: 17px; height: 17px; }
+
+.chore-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px var(--pad);
+  border-bottom: 1px solid var(--line);
+  background: none;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chore-item:last-child { border-bottom: 0; }
+.chore-item:active { background: var(--surface-sunk); }
+
+.chore-name { font-weight: 600; }
+
+.chore-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 2px;
+  font-size: 0.76rem;
+  color: var(--ink-3);
+}
+
+.weight-tag {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--ink-2);
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 5px;
+}
+
+/* Daily chores show a compact seven-day strip of who's on which day */
+.day-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  margin-top: 9px;
+  width: 100%;
+}
+
+.day-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 1px 6px;
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.day-cell .day-label {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.day-cell .dot { width: 19px; height: 19px; font-size: 0.6rem; }
+.day-cell.is-today { border-color: var(--ink); border-width: 1.5px; }
+
+/* ---------------------------------------------------------------------------
+   BALANCE STRIP — the signature element.
+
+   One bar, split by person, sized by how much they've carried. Even segments
+   mean an even load; a fat segment is instantly visible without reading a
+   single number. The notch marks where perfectly even would fall.
+   ------------------------------------------------------------------------ */
+
+.balance-strip {
+  position: relative;
+  display: flex;
+  height: 46px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-sunk);
+}
+
+.balance-seg {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: var(--tape);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  min-width: 0;
+  overflow: hidden;
+  transition: flex-grow 0.4s ease;
+}
+
+.balance-ticks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+}
+
+.balance-tick {
+  flex: 1 1 0;
+  border-right: 1.5px dashed rgba(255, 255, 255, 0.75);
+}
+
+.balance-tick:last-child { border-right: 0; }
+
+.balance-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 12px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.84rem;
+}
+
+.legend-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  background: var(--tape);
+  flex: none;
+}
+
+.legend-value {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--ink-2);
+}
+
+/* ---------------------------------------------------------------------------
+   LISTS: people, chores, activity
+   ------------------------------------------------------------------------ */
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px var(--pad);
+  border-bottom: 1px solid var(--line);
+}
+
+.list-row:last-child { border-bottom: 0; }
+.list-row.is-off { opacity: 0.45; }
+
+.log-entry {
+  padding: 11px var(--pad);
+  border-bottom: 1px solid var(--line);
+  font-size: 0.88rem;
+}
+
+.log-entry:last-child { border-bottom: 0; }
+
+.log-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.log-who { font-weight: 650; }
+
+.log-when {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.log-detail { color: var(--ink-2); margin-top: 1px; }
+
+.log-change {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  margin-top: 3px;
+}
+
+.log-before { color: var(--ink-3); text-decoration: line-through; }
+.log-after { color: var(--ink); }
+
+/* ---------------------------------------------------------------------------
+   FORMS
+   ------------------------------------------------------------------------ */
+
+.field { display: flex; flex-direction: column; gap: 5px; }
+
+.field label {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+}
+
+.input:focus { border-color: var(--ink); outline: none; }
+
+.seg-control {
+  display: flex;
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 3px;
+}
+
+.seg-control button {
+  flex: 1 1 0;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.seg-control button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.09);
+}
+
+.switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+
+.switch input { width: 19px; height: 19px; accent-color: var(--ink); }
+
+/* ---------------------------------------------------------------------------
+   BOTTOM SHEET (used for every edit, swap and picker)
+   ------------------------------------------------------------------------ */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(19, 30, 27, 0.42);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  animation: fade 0.16s ease;
+}
+
+.sheet {
+  width: 100%;
+  max-width: var(--shell);
+  max-height: 86dvh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: 20px 20px 0 0;
+  padding: 10px var(--pad) calc(env(safe-area-inset-bottom) + 20px);
+  animation: rise 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.sheet-grip {
+  width: 38px;
+  height: 4px;
+  border-radius: 99px;
+  background: var(--line-strong);
+  margin: 4px auto 14px;
+}
+
+.sheet h2 { font-size: 1.12rem; margin-bottom: 3px; }
+.sheet-sub { color: var(--ink-2); font-size: 0.87rem; margin-bottom: 16px; }
+
+.pick-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 6px; }
+
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+  cursor: pointer;
+}
+
+.pick[aria-pressed='true'] {
+  border-color: var(--ink);
+  border-width: 1.5px;
+  background: var(--surface-sunk);
+}
+
+.pick.is-disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---------------------------------------------------------------------------
+   BANNERS, EMPTY STATES, TOASTS
+   ------------------------------------------------------------------------ */
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  color: var(--warn-ink);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  font-size: 0.85rem;
+  margin-bottom: var(--gap);
+}
+
+.empty {
+  text-align: center;
+  padding: 34px 20px;
+  color: var(--ink-2);
+}
+
+.empty h2 { font-size: 1.1rem; margin-bottom: 6px; color: var(--ink); }
+.empty p { margin: 0 0 16px; font-size: 0.92rem; }
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 78px);
+  transform: translateX(-50%);
+  z-index: 60;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-size: 0.87rem;
+  font-weight: 600;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  animation: rise 0.2s ease;
+}
+
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+@keyframes rise {
+  from { transform: translateY(14px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.toast { animation-name: fade; }
+
+/* Gentle staggered entrance for the week list — enough to feel alive, not
+   enough to slow anyone down. */
+.stagger > * {
+  animation: rise 0.3s ease both;
+}
+
+.stagger > *:nth-child(1) { animation-delay: 0.02s; }
+.stagger > *:nth-child(2) { animation-delay: 0.05s; }
+.stagger > *:nth-child(3) { animation-delay: 0.08s; }
+.stagger > *:nth-child(4) { animation-delay: 0.11s; }
+.stagger > *:nth-child(5) { animation-delay: 0.14s; }
+.stagger > *:nth-child(n + 6) { animation-delay: 0.17s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001s !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.001s !important;
+  }
+}
+
+/* Wider screens: the app stays a phone-shaped column, which is what it is. */
+@media (min-width: 700px) {
+  main { padding-bottom: var(--pad); }
+
+  .tabbar {
+    position: sticky;
+    max-width: var(--shell);
+    margin: 0 auto;
+    border-radius: var(--radius) var(--radius) 0 0;
+    border: 1px solid var(--line);
+    border-bottom: 0;
+  }
+}

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Chores</title>
+
+  <!-- viewport-fit=cover lets the app paint into the notch and home-indicator
+       areas; the CSS uses env(safe-area-inset-*) to keep content clear of them.
+       user-scalable=no stops a double-tap zooming the whole roster sideways. -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="description" content="A fair weekly chore roster for the family.">
+  <meta name="theme-color" content="#edf1ef">
+
+  <!-- ==================================================================
+       HOME SCREEN INSTALL
+
+       These are what turn the site into a real app icon. On an iPhone:
+       open in Safari -> Share -> Add to Home Screen. It then launches
+       full screen with no address bar.
+       ================================================================== -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Chores">
+  <!-- default = dark text on the light status bar, matching our background -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" href="icons/icon-192.png" sizes="192x192">
+  <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+
+  <!-- Fonts. If they're slow or blocked, the CSS falls back to system faces
+       and the app still works. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap">
+
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Replaced as soon as the app boots. Shown if JavaScript is slow. -->
+    <main>
+      <div class="card empty">
+        <h2>Loading the roster…</h2>
+      </div>
+    </main>
+  </div>
+
+  <noscript>
+    <main>
+      <div class="card empty">
+        <h2>JavaScript is switched off</h2>
+        <p>This app needs JavaScript to work. Turn it on in your browser settings
+           and reload the page.</p>
+      </div>
+    </main>
+  </noscript>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
