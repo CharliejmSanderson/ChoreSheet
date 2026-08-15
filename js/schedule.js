@@ -1,51 +1,49 @@
 /* ============================================================================
    schedule.js — the fairness engine.
 
-   This file is deliberately kept free of any UI or Firebase code. Everything in
-   here is a pure function: same inputs, same outputs. That makes the numbers at
-   the top safe to tweak without touching the rest of the app, and makes the
-   whole thing testable.
+   HOW FAIRNESS WORKS
 
-   If the roster starts feeling unfair or too predictable, THE THREE CONSTANTS
-   BELOW are the dials to turn. Nothing else should need editing.
+   Every chore is tracked per person, per chore: "Sam has walked the dog 4
+   times, Ella 6". When a chore needs assigning, whoever has done that
+   particular chore least often comes first. Do that for every chore and each
+   person ends up doing each job a roughly equal number of times.
+
+   It isn't a strict "lowest count always wins" — that would make the roster
+   completely predictable. Anyone within COUNT_TOLERANCE of the lowest is in
+   the running, and the pick among them is random.
+
+   This file is deliberately free of any UI or Firebase code. Everything here
+   is a pure function, so the constants below are safe to tune on their own.
    ========================================================================== */
 
 /* ---------------------------------------------------------------------------
    TUNABLE CONSTANTS
    ------------------------------------------------------------------------ */
 
-/** How many past weeks feed the fairness calculation.
- *  Lower  = reacts fast, forgets fast (good if the family changes often).
- *  Higher = longer memory, smoother balance over time. */
-export const TRAILING_WEEKS = 6;
+/** How far back the counts look, in weeks. 0 means all time.
+ *  All time is usually what you want — it's what makes "we've each done this
+ *  the same number of times" true over the long run. Set a number (e.g. 12) if
+ *  you'd rather old history stopped counting. */
+export const HISTORY_WEEKS = 0;
 
-/** Two people are treated as "tied" if their running scores are within this
- *  much of each other. Ties get broken randomly, which stops the roster
- *  becoming a robotic, predictable rotation.
- *  Set to 0 for strict "lowest score always wins" (more rigid, more fair).
- *  Raise it for more shuffle. Roughly: set it near your smallest chore weight. */
-export const TIE_TOLERANCE = 1;
+/** How close someone's count must be to the lowest to still be in the running.
+ *  This is the variety dial.
+ *    0  = strictly whoever has done it least (fairest, very predictable)
+ *    1  = anyone within one go of the lowest (default: fair but varied)
+ *    2+ = looser still, more shuffle, slower to even out */
+export const COUNT_TOLERANCE = 1;
 
-/** Avoid giving someone the exact same chore they had this many weeks ago.
- *  Only applies when there's another tied candidate available — fairness always
- *  wins over variety. Set to 0 to switch this off entirely. */
+/** Avoid giving someone the same chore they had this many weeks ago, as long
+ *  as there's another equally-due candidate. Set to 0 to switch off. */
 export const REPEAT_PENALTY_WEEKS = 1;
 
-/** Ceiling on how much any one person can be given in a SINGLE week, as a
- *  multiple of that week's fair share.
- *
- *  Without this, someone coming back from a week away gets handed their entire
- *  backlog at once — landing them with roughly double a normal week, which
- *  reads as a punishment for having been away. With it, the catch-up spreads
- *  over two or three weeks instead, and the long-run totals still even out.
- *
- *  1.0 = nobody ever exceeds a fair share (rigid; can leave chores unassigned
- *  if the numbers don't divide neatly). 1.3 is a sensible middle. Set very high
- *  (e.g. 99) to switch the cap off and go back to catching up in one hit. */
+/** Ceiling on how many jobs one person can be given in a SINGLE week, as a
+ *  multiple of a fair share. Stops someone returning from a week away being
+ *  handed their whole backlog at once; catch-up spreads over a few weeks
+ *  instead. Set very high (99) to switch off. */
 export const MAX_WEEKLY_SHARE = 1.3;
 
-/** Day keys, Monday-first. The order matters: it's the order daily chores get
- *  assigned in, and the order they're displayed in. */
+/** Day keys, Monday-first. */
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 export const DAY_LABELS = {
@@ -61,12 +59,10 @@ export const DAY_LABELS = {
 /* ---------------------------------------------------------------------------
    DATE HELPERS
 
-   Every date is handled as a local "YYYY-MM-DD" string, never a UTC timestamp.
-   This matters: using UTC would shift the week boundary for anyone not on UTC
-   and could land a Monday on the wrong day. Weeks run Monday -> Sunday.
+   Dates are local "YYYY-MM-DD" strings, never UTC timestamps — UTC would shift
+   the week boundary for anyone outside it. Weeks run Monday -> Sunday.
    ------------------------------------------------------------------------ */
 
-/** Format a Date as a local YYYY-MM-DD string (no timezone shifting). */
 export function toISODate(date) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -74,7 +70,6 @@ export function toISODate(date) {
   return `${y}-${m}-${d}`;
 }
 
-/** Parse a local YYYY-MM-DD string back into a Date at local midnight. */
 export function fromISODate(iso) {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d);
@@ -86,34 +81,25 @@ export function addDays(date, n) {
   return copy;
 }
 
-/** The Monday of the week containing `date`. This is a week's ID. */
 export function mondayOf(date = new Date()) {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const dow = d.getDay();            // 0 = Sunday ... 6 = Saturday
-  const offset = dow === 0 ? -6 : 1 - dow; // Sunday belongs to the week just ending
+  const dow = d.getDay();                    // 0 = Sunday ... 6 = Saturday
+  const offset = dow === 0 ? -6 : 1 - dow;   // Sunday belongs to the week ending
   return addDays(d, offset);
 }
 
-/** Week ID (the Monday, as YYYY-MM-DD) for whatever week contains `date`. */
 export function weekIdFor(date = new Date()) {
   return toISODate(mondayOf(date));
 }
 
-export function nextWeekId(weekId) {
-  return toISODate(addDays(fromISODate(weekId), 7));
-}
+export const nextWeekId = (weekId) => toISODate(addDays(fromISODate(weekId), 7));
+export const prevWeekId = (weekId) => toISODate(addDays(fromISODate(weekId), -7));
 
-export function prevWeekId(weekId) {
-  return toISODate(addDays(fromISODate(weekId), -7));
-}
-
-/** Whole weeks between two week IDs. Positive if `later` is after `earlier`. */
 export function weeksBetween(earlier, later) {
   const ms = fromISODate(later) - fromISODate(earlier);
   return Math.round(ms / (7 * 24 * 60 * 60 * 1000));
 }
 
-/** The seven dates of a week, keyed by day. */
 export function datesOfWeek(weekId) {
   const monday = fromISODate(weekId);
   const out = {};
@@ -121,15 +107,13 @@ export function datesOfWeek(weekId) {
   return out;
 }
 
-/** Human-readable week range, e.g. "17–23 Aug 2026". */
+/** "17–23 Aug 2026" */
 export function formatWeekRange(weekId) {
   const start = fromISODate(weekId);
   const end = addDays(start, 6);
   const month = (d) => d.toLocaleDateString(undefined, { month: 'short' });
   const sameMonth = start.getMonth() === end.getMonth();
-  const left = sameMonth
-    ? `${start.getDate()}`
-    : `${start.getDate()} ${month(start)}`;
+  const left = sameMonth ? `${start.getDate()}` : `${start.getDate()} ${month(start)}`;
   return `${left}–${end.getDate()} ${month(end)} ${end.getFullYear()}`;
 }
 
@@ -137,7 +121,6 @@ export function formatWeekRange(weekId) {
    ELIGIBILITY
    ------------------------------------------------------------------------ */
 
-/** Can this person be given this chore this week? */
 export function isEligible(member, chore, unavailableIds = []) {
   if (!member.active) return false;
   if (unavailableIds.includes(member.id)) return false;
@@ -146,77 +129,73 @@ export function isEligible(member, chore, unavailableIds = []) {
 }
 
 /* ---------------------------------------------------------------------------
-   SCORING
+   COUNTING
 
-   A person's score is the total weight of everything they were actually
-   assigned across the trailing window. Crucially this is ALWAYS recomputed
-   from saved week records — it is never stored as its own field, so it can't
-   drift out of sync when assignments get edited mid-week.
-
-   Each saved assignment carries the weight that was in effect when the week was
-   generated, so re-weighting a chore later never rewrites history.
+   Counts are always recomputed from saved week records — never stored as their
+   own field, so they can't drift out of sync when a week is edited by hand.
+   A daily chore counts once per day, to whoever actually did that day.
    ------------------------------------------------------------------------ */
 
-/** Total weight each member carries in a single saved week record. */
-export function scoreOfWeek(week) {
-  const totals = {};
-  const add = (memberId, weight) => {
+const emptyCount = () => ({ total: 0, byChore: {} });
+
+/** Per-person counts within a single saved week. */
+export function countsOfWeek(week) {
+  const out = {};
+  const add = (memberId, choreId) => {
     if (!memberId) return;
-    totals[memberId] = (totals[memberId] || 0) + (Number(weight) || 0);
+    if (!out[memberId]) out[memberId] = emptyCount();
+    out[memberId].total += 1;
+    out[memberId].byChore[choreId] = (out[memberId].byChore[choreId] || 0) + 1;
   };
 
   for (const a of week.assignments || []) {
     if (a.type === 'daily') {
-      // A daily chore counts once per day, to whoever did that day — not seven
-      // times to a single person.
-      for (const day of DAYS) add(a.days?.[day], a.weight);
+      for (const day of DAYS) add(a.days?.[day], a.choreId);
     } else {
-      add(a.assignedTo, a.weight);
+      add(a.assignedTo, a.choreId);
     }
   }
-  return totals;
+  return out;
 }
 
 /**
- * Running fairness scores across the trailing window.
- *
- * @param {Array}  weeks        all saved week records (any order)
- * @param {Array}  members      family members
- * @param {Object} opts
- *   - before:        only count weeks strictly before this week ID
- *   - trailingWeeks: window size (defaults to TRAILING_WEEKS)
- * @returns {Object} { [memberId]: score } — every member present, zeroed if idle
+ * How many times each person has done each chore.
+ * @returns {Object} { [memberId]: { total, byChore: { [choreId]: n } } }
  */
-export function computeScores(weeks, members, opts = {}) {
-  const { before = null, trailingWeeks = TRAILING_WEEKS } = opts;
+export function computeCounts(weeks, members, opts = {}) {
+  const { before = null, historyWeeks = HISTORY_WEEKS } = opts;
 
-  const relevant = weeks
+  let relevant = weeks
     .filter((w) => (before ? w.id < before : true))
-    .sort((a, b) => (a.id < b.id ? 1 : -1)) // newest first
-    .slice(0, trailingWeeks);
+    .sort((a, b) => (a.id < b.id ? 1 : -1)); // newest first
 
-  const scores = {};
-  for (const m of members) scores[m.id] = 0;
+  if (historyWeeks > 0) relevant = relevant.slice(0, historyWeeks);
+
+  const counts = {};
+  for (const m of members) counts[m.id] = emptyCount();
 
   for (const week of relevant) {
-    const totals = scoreOfWeek(week);
-    for (const [memberId, value] of Object.entries(totals)) {
-      // Guard against members who have since been deleted.
-      if (memberId in scores) scores[memberId] += value;
+    for (const [memberId, weekCount] of Object.entries(countsOfWeek(week))) {
+      if (!counts[memberId]) continue; // someone since removed from the family
+      counts[memberId].total += weekCount.total;
+      for (const [choreId, n] of Object.entries(weekCount.byChore)) {
+        counts[memberId].byChore[choreId] = (counts[memberId].byChore[choreId] || 0) + n;
+      }
     }
   }
-  return scores;
+  return counts;
 }
 
-/**
- * How many weeks ago did this person last have this exact chore?
- * Returns Infinity if they haven't had it inside the window.
- */
+/** How many times this person has done this chore. */
+export const countFor = (counts, memberId, choreId) =>
+  counts[memberId]?.byChore?.[choreId] || 0;
+
+/** How many weeks ago this person last had this chore. Infinity if never. */
 export function weeksSinceChore(weeks, memberId, choreId, targetWeekId) {
   let best = Infinity;
 
   for (const week of weeks) {
-    if (week.id >= targetWeekId) continue; // only look backwards
+    if (week.id >= targetWeekId) continue;
     const gap = weeksBetween(week.id, targetWeekId);
     if (gap >= best) continue;
 
@@ -234,13 +213,9 @@ export function weeksSinceChore(weeks, memberId, choreId, targetWeekId) {
 /* ---------------------------------------------------------------------------
    INSTANCE EXPANSION
 
-   The heart of the "weekly vs daily" distinction. Before anything is assigned,
-   the chore list is flattened into individual pieces of work:
-     - a weekly chore  -> 1 instance  (one owner, all week)
-     - a daily chore   -> 7 instances (assigned independently, day by day)
-
-   Everything downstream then treats those instances identically, which is what
-   stops a heavy daily chore landing on one person seven times over.
+   Chores are flattened into individual jobs before anything is assigned:
+     weekly chore -> 1 job  (one owner, all week)
+     daily chore  -> 7 jobs (assigned independently, day by day)
    ------------------------------------------------------------------------ */
 
 export function expandInstances(chores) {
@@ -252,7 +227,7 @@ export function expandInstances(chores) {
     const base = {
       choreId: chore.id,
       choreName: chore.name,
-      weight: Number(chore.weight) || 0, // snapshotted here, at generation time
+      notes: chore.notes || '',   // snapshotted, so past weeks keep the old note
       adultOnly: !!chore.adultOnly,
     };
 
@@ -266,59 +241,90 @@ export function expandInstances(chores) {
 }
 
 /* ---------------------------------------------------------------------------
-   THE ASSIGNMENT PASS
+   PICKING SOMEONE
    ------------------------------------------------------------------------ */
 
 /**
- * Pick who gets one instance.
+ * Choose who gets one job.
  *
- * 1. Filter to eligible people.
- * 2. Find the lowest running score.
- * 3. Take everyone within TIE_TOLERANCE of it — these are the "tied" candidates.
- * 4. Prefer tied candidates who did NOT have this chore recently. If that rules
- *    out everybody, fall back to the full tied set (fairness beats variety).
- * 5. Pick randomly from what's left.
+ * 1. Only people eligible for it (active, around, old enough).
+ * 2. Drop anyone who's hit this week's ceiling — unless that leaves nobody, as
+ *    a job is never left unassigned just to respect the cap.
+ * 3. Keep everyone within COUNT_TOLERANCE of the lowest count FOR THIS CHORE.
+ *    This is the main fairness rule.
+ * 4. Prefer people who haven't had this chore in the last week or so.
+ * 5. Among those left, prefer whoever has the lowest total across all chores,
+ *    so nobody quietly accumulates more jobs overall.
+ * 6. Pick at random from whoever's still standing.
  */
 function pickAssignee({
-  instance, members, scores, unavailable, history, weekId, rng,
+  instance, members, counts, unavailable, history, weekId, rng,
   weekLoad = {}, cap = Infinity,
 }) {
   const chore = { adultOnly: instance.adultOnly };
-  let eligible = members.filter((m) => isEligible(m, chore, unavailable));
-  if (eligible.length === 0) return null;
+  let pool = members.filter((m) => isEligible(m, chore, unavailable));
+  if (pool.length === 0) return null;
 
-  // Hold back anyone who has already hit this week's ceiling — but only while
-  // somebody else can take it. A chore never goes unassigned just to respect
-  // the cap; the cap is a preference, not a hard rule.
-  const underCap = eligible.filter((m) => (weekLoad[m.id] ?? 0) < cap);
-  if (underCap.length > 0) eligible = underCap;
+  const underCap = pool.filter((m) => (weekLoad[m.id] ?? 0) < cap);
+  if (underCap.length > 0) pool = underCap;
 
-  const lowest = Math.min(...eligible.map((m) => scores[m.id] ?? 0));
-  const tied = eligible.filter((m) => (scores[m.id] ?? 0) <= lowest + TIE_TOLERANCE);
+  // 3 — lowest count of this specific chore
+  const lowest = Math.min(...pool.map((m) => countFor(counts, m.id, instance.choreId)));
+  pool = pool.filter(
+    (m) => countFor(counts, m.id, instance.choreId) <= lowest + COUNT_TOLERANCE);
 
-  let pool = tied;
-  if (REPEAT_PENALTY_WEEKS > 0 && tied.length > 1) {
-    const fresh = tied.filter(
-      (m) => weeksSinceChore(history, m.id, instance.choreId, weekId) > REPEAT_PENALTY_WEEKS
-    );
+  // 4 — avoid an immediate repeat where we can afford to
+  if (REPEAT_PENALTY_WEEKS > 0 && pool.length > 1) {
+    const fresh = pool.filter(
+      (m) => weeksSinceChore(history, m.id, instance.choreId, weekId) > REPEAT_PENALTY_WEEKS);
     if (fresh.length > 0) pool = fresh;
   }
 
+  // 5 — tie-break on overall workload
+  if (pool.length > 1) {
+    const lowestTotal = Math.min(...pool.map((m) => counts[m.id]?.total || 0));
+    pool = pool.filter((m) => (counts[m.id]?.total || 0) <= lowestTotal + COUNT_TOLERANCE);
+  }
+
+  // 6 — random among equals
   return pool[Math.floor(rng() * pool.length)];
 }
 
+/** Register one assignment against the running tallies. */
+function tally(counts, weekLoad, memberId, choreId) {
+  if (!memberId) return;
+  if (!counts[memberId]) counts[memberId] = emptyCount();
+  counts[memberId].total += 1;
+  counts[memberId].byChore[choreId] = (counts[memberId].byChore[choreId] || 0) + 1;
+  weekLoad[memberId] = (weekLoad[memberId] || 0) + 1;
+}
+
+/** Read an existing assignee out of a week record, for a given job. */
+function preservedAssignee(week, instance) {
+  if (!week) return undefined;
+  const record = (week.assignments || []).find((a) => a.choreId === instance.choreId);
+  if (!record) return undefined;
+  return instance.type === 'daily' ? record.days?.[instance.day] : record.assignedTo;
+}
+
+/* ---------------------------------------------------------------------------
+   GENERATING A WEEK
+   ------------------------------------------------------------------------ */
+
 /**
- * Generate a full week's assignments.
+ * Build a week's assignments.
  *
  * @param {Object} opts
- *   - weekId       week to generate (Monday, YYYY-MM-DD)
+ *   - weekId       the Monday, YYYY-MM-DD
  *   - chores       current chore list
- *   - members      current family members
+ *   - members      family members
  *   - unavailable  member IDs sitting this week out
- *   - history      all previously saved week records
- *   - rng          optional random source, injectable for testing
- *
- * @returns {Object} a week record ready to save
+ *   - history      previously saved week records
+ *   - fill         'auto'   assign everything (default)
+ *                  'manual' leave it all unassigned, to be done by hand
+ *                  'rest'   keep what's already assigned, fill in the gaps
+ *   - preserve     an existing week record — required for fill: 'rest'
+ *   - rng          injectable random source, for testing
  */
 export function generateWeek({
   weekId,
@@ -326,53 +332,65 @@ export function generateWeek({
   members,
   unavailable = [],
   history = [],
+  fill = 'auto',
+  preserve = null,
   rng = Math.random,
 }) {
-  // Step 1 — flatten into individual pieces of work.
   const instances = expandInstances(chores);
 
-  // Step 2 — starting scores from the trailing window. Anyone who was away has
-  // naturally accumulated less, so they'll be picked first here until they've
-  // caught back up. That's the catch-up behaviour: no separate deficit field.
-  const scores = computeScores(history, members, { before: weekId });
+  // Counts as they stand before this week. Anyone who's been away naturally has
+  // lower counts, so they come up first until they've caught back up.
+  const counts = computeCounts(history, members, { before: weekId });
 
-  // Step 3 — heaviest first. Assigning the worst jobs while the score gaps are
-  // still wide is what lets the lighter chores even things out afterwards.
-  const ordered = [...instances].sort((a, b) => b.weight - a.weight);
-
-  // How much work is going out this week, and what one person's fair slice of
-  // it looks like. The cap keeps any single week from becoming a pile-on.
-  const totalWeight = instances.reduce((sum, i) => sum + i.weight, 0);
   const availableCount =
     members.filter((m) => m.active && !unavailable.includes(m.id)).length || 1;
-  const cap = (totalWeight / availableCount) * MAX_WEEKLY_SHARE;
+  const cap = (instances.length / availableCount) * MAX_WEEKLY_SHARE;
 
-  // Step 4/5 — assign one at a time, updating the running score as we go so the
-  // pass self-balances within this week, not just against past weeks.
-  const assigned = [];
   const weekLoad = {};
   for (const m of members) weekLoad[m.id] = 0;
 
-  for (const instance of ordered) {
-    const person = pickAssignee({
-      instance, members, scores, unavailable, history, weekId, rng, weekLoad, cap,
-    });
+  // Anything already assigned by hand is locked in first and counted, so the
+  // automatic pass balances around those choices rather than ignoring them.
+  const assigned = [];
+  const toFill = [];
 
-    if (person) {
-      scores[person.id] += instance.weight;   // long-run fairness
-      weekLoad[person.id] += instance.weight; // this week's ceiling
+  for (const instance of instances) {
+    const existing = fill === 'auto' ? undefined : preservedAssignee(preserve, instance);
+
+    if (existing) {
+      tally(counts, weekLoad, existing, instance.choreId);
+      assigned.push({ ...instance, assignedTo: existing });
+    } else if (fill === 'manual') {
+      assigned.push({ ...instance, assignedTo: null });
+    } else {
+      toFill.push(instance);
     }
+  }
+
+  // Most-constrained jobs first: an adults-only chore needs placing while the
+  // adults still have room, or it can end up with nobody able to take it.
+  // Random tie-break so the order isn't identical every week.
+  const eligibleCount = (instance) =>
+    members.filter((m) => isEligible(m, { adultOnly: instance.adultOnly }, unavailable)).length;
+
+  toFill.sort((a, b) => (eligibleCount(a) - eligibleCount(b)) || (rng() - 0.5));
+
+  for (const instance of toFill) {
+    const person = pickAssignee({
+      instance, members, counts, unavailable, history, weekId, rng, weekLoad, cap,
+    });
+    if (person) tally(counts, weekLoad, person.id, instance.choreId);
     assigned.push({ ...instance, assignedTo: person ? person.id : null });
   }
 
-  // Step 6 — fold the instances back into one record per chore.
+  // Fold the individual jobs back into one record per chore.
   const byChore = new Map();
   for (const inst of assigned) {
     if (!byChore.has(inst.choreId)) {
       byChore.set(inst.choreId, {
         choreId: inst.choreId,
         choreName: inst.choreName,
-        weight: inst.weight,
+        notes: inst.notes || '',
         adultOnly: inst.adultOnly,
         type: inst.type,
         ...(inst.type === 'daily' ? { days: {} } : { assignedTo: null }),
@@ -383,18 +401,15 @@ export function generateWeek({
     else record.assignedTo = inst.assignedTo;
   }
 
-  // Present chores in a stable, readable order rather than weight order.
   const assignments = [...byChore.values()].sort((a, b) =>
-    a.choreName.localeCompare(b.choreName)
-  );
+    a.choreName.localeCompare(b.choreName));
 
-  const start = fromISODate(weekId);
   return {
     id: weekId,
     startDate: weekId,
-    endDate: toISODate(addDays(start, 6)),
+    endDate: toISODate(addDays(fromISODate(weekId), 6)),
     generatedAt: new Date().toISOString(),
-    generatedBy: null, // filled in by the caller, who knows who's using the app
+    generatedBy: null,     // filled in by the caller
     unavailable: [...unavailable],
     assignments,
   };
@@ -404,7 +419,7 @@ export function generateWeek({
    READ HELPERS FOR THE UI
    ------------------------------------------------------------------------ */
 
-/** Flatten a saved week into per-person rows, for "what do I have on?" views. */
+/** Everything one person has on in a week. */
 export function assignmentsForMember(week, memberId) {
   const out = [];
   for (const a of week.assignments || []) {
@@ -418,14 +433,27 @@ export function assignmentsForMember(week, memberId) {
   return out;
 }
 
-/** Which week should we offer to generate next? The first ungenerated one. */
+/** How many jobs in this week still have nobody against them. */
+export function unassignedCount(week) {
+  let n = 0;
+  for (const a of week?.assignments || []) {
+    if (a.type === 'daily') n += DAYS.filter((d) => !a.days?.[d]).length;
+    else if (!a.assignedTo) n += 1;
+  }
+  return n;
+}
+
+/** Total jobs in a week, assigned or not. */
+export function totalJobs(week) {
+  let n = 0;
+  for (const a of week?.assignments || []) n += a.type === 'daily' ? DAYS.length : 1;
+  return n;
+}
+
+/** The first week that hasn't been drawn up yet. */
 export function nextUngeneratedWeekId(existingWeekIds, from = new Date()) {
   let candidate = weekIdFor(from);
   const known = new Set(existingWeekIds);
-  // Walk forward until we hit a week that doesn't exist yet. The cap is just a
-  // safety net so a bad data state can't spin forever.
-  for (let i = 0; i < 520 && known.has(candidate); i++) {
-    candidate = nextWeekId(candidate);
-  }
+  for (let i = 0; i < 520 && known.has(candidate); i++) candidate = nextWeekId(candidate);
   return candidate;
 }

@@ -7,7 +7,7 @@
 
    Collections:
      familyMembers  people
-     chores         the chore library (name, weight, weekly/daily)
+     chores         the chore library (name, note, weekly/daily)
      weeks          one document per generated week, keyed by its Monday
      activityLog    an append-only record of every change anyone makes
    ========================================================================== */
@@ -156,10 +156,10 @@ function seedStarterData() {
     { id: localId(), name: 'Add your family', active: true, ageRestricted: false },
   ];
   data.chores = [
-    { id: localId(), name: 'Load the dishwasher', weight: 1, frequency: 'daily', adultOnly: false, active: true },
-    { id: localId(), name: 'Walk the dog', weight: 3, frequency: 'daily', adultOnly: false, active: true },
-    { id: localId(), name: 'Clean the bathroom', weight: 4, frequency: 'weekly', adultOnly: false, active: true },
-    { id: localId(), name: 'Bins out', weight: 1, frequency: 'weekly', adultOnly: false, active: true },
+    { id: localId(), name: 'Load the dishwasher', notes: '', frequency: 'daily', adultOnly: false, active: true },
+    { id: localId(), name: 'Walk the dog', notes: 'Before 8am on school days', frequency: 'daily', adultOnly: false, active: true },
+    { id: localId(), name: 'Clean the bathroom', notes: '', frequency: 'weekly', adultOnly: false, active: true },
+    { id: localId(), name: 'Bins out', notes: 'Tuesday night at the latest', frequency: 'weekly', adultOnly: false, active: true },
   ];
   data.weeks = [];
   data.log = [];
@@ -221,7 +221,7 @@ export const removeMember = (id) => remove('familyMembers', 'members', id);
 export const addChore = (chore) =>
   create('chores', 'chores', {
     name: chore.name.trim(),
-    weight: Number(chore.weight) || 1,
+    notes: (chore.notes || '').trim(),
     frequency: chore.frequency === 'daily' ? 'daily' : 'weekly',
     adultOnly: !!chore.adultOnly,
     active: true,
@@ -295,4 +295,4 @@ export function resetLocal() {
   try { localStorage.removeItem(LOCAL_KEY); } catch {}
   seedStarterData();
   notify();
-}
+} 

@@ -12,7 +12,7 @@
    Surfaces are a cool appliance-white rather than warm paper; the app lives in
    a kitchen, not a notebook. Type pairs a slightly quirky grotesque for
    headings with a clean sans for reading and a mono for anything numeric —
-   weights and scores read as data, not prose.
+   tallies read as data, not prose.
    ========================================================================== */
 
 /* ---------------------------------------------------------------------------
@@ -152,9 +152,21 @@ button, input, select {
   white-space: nowrap;
 }
 
+/* The shell is a full-height column: the main area grows to fill whatever's
+   left, which keeps the tab bar pinned to the bottom on a tall desktop window
+   instead of floating halfway up the page. */
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 main {
   max-width: var(--shell);
   margin: 0 auto;
+  width: 100%;
+  flex: 1 1 auto;
   padding: var(--pad) var(--pad) 96px;
 }
 
@@ -400,14 +412,47 @@ main {
   color: var(--ink-3);
 }
 
-.weight-tag {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--ink-2);
-  background: var(--surface-sunk);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  padding: 0 5px;
+/* A standing note on a chore — timings, instructions, anything worth repeating */
+.chore-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 5px 9px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: 7px;
+  color: var(--warn-ink);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.chore-note > span:first-child {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--warn-ink);
+  color: var(--warn-bg);
+  display: grid;
+  place-items: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+}
+
+/* Blocks can't be inside a <button>, so daily chores use a div instead */
+.chore-item-block {
+  display: block;
+  cursor: default;
+}
+
+/* An empty slot in a day strip or picker */
+.dot-empty {
+  background: var(--surface);
+  border: 1.5px dashed var(--line-strong);
+  color: var(--ink-3);
 }
 
 /* Daily chores show a compact seven-day strip of who's on which day */
@@ -758,6 +803,67 @@ main {
     animation-delay: 0s !important;
     transition-duration: 0.001s !important;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   TASKS TAB — per-person tallies
+   ------------------------------------------------------------------------ */
+
+.person-block {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.person-block > summary {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 13px var(--pad);
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+/* Hide the default disclosure triangle in both engines */
+.person-block > summary::-webkit-details-marker { display: none; }
+.person-block > summary::marker { content: ''; }
+
+.count-total {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.summary-chevron {
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+  transition: transform 0.18s ease;
+}
+
+.person-block[open] > summary { border-bottom: 1px solid var(--line); }
+.person-block[open] .summary-chevron { transform: rotate(90deg); }
+
+.count-list { padding: 4px 0 6px; }
+
+.count-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px var(--pad);
+  font-size: 0.9rem;
+}
+
+.count-row.is-zero { color: var(--ink-3); }
+
+.count-value {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  min-width: 24px;
+  text-align: right;
 }
 
 /* Wider screens: the app stays a phone-shaped column, which is what it is. */

@@ -197,52 +197,69 @@ name. That's what signs their name against anything they change.
 
 ## How the fairness works
 
-Every chore has a **weight** — how much of a pain it is. Walking the dog might be
-3, putting the bins out 1. The numbers are relative and only ever compared to
-each other, so use whatever scale suits you.
+The app counts **how many times each person has done each chore**. When a chore
+needs allocating, whoever has done that particular one least often comes first.
+Do that for every chore, every week, and each person ends up doing each job
+about the same number of times.
 
-When a week is drawn up:
+It isn't strictly "lowest count always wins" — that would make the roster
+completely predictable. Anyone within one go of the lowest count is in the
+running, and the pick among them is random. Two more rules keep it sensible:
 
-1. **Chores become individual jobs.** A weekly chore is one job for one person.
-   A daily chore becomes seven separate jobs, one per day — so a rotating chore
-   genuinely rotates instead of landing on one person for the whole week.
-2. **Everyone's recent load is added up** from the last few weeks, using the
-   weights that were in effect at the time.
-3. **The heaviest jobs are handed out first**, each going to whoever's carrying
-   the least at that moment.
-4. **Scores update as it goes**, so the lighter jobs fill in the gaps and
-   everyone lands near the same total.
-
-Three things stop it feeling mechanical:
-
-- **Near-ties are broken randomly**, so it isn't a predictable rotation.
 - **Nobody gets the same chore two weeks running** if someone else is equally
   due for it.
-- **Nobody gets buried in one week.** Someone coming back from a week away has a
+- **Nobody gets buried in one week.** Someone back from a week away has a
   backlog, but it's spread over a few weeks rather than dumped on them at once.
 
-Marking someone **away** takes them out entirely for that week. They're not let
-off — they've simply carried less, so they come up first once they're back.
+Where several people are equally due for a chore, the tie is broken by who has
+the lowest total across *all* chores, so nobody quietly accumulates more jobs
+overall.
 
-**Editing a week doesn't break any of this.** Fairness is always recalculated
-from what people actually ended up doing, so swaps and reassignments count. And
-changing a chore's weight only affects future weeks: past weeks keep the weight
-they were drawn up with, so history stays honest.
+Marking someone **away** takes them out entirely for that week. They're not let
+off — they've simply done fewer, so they come up first once they're back.
+
+**Editing a week doesn't break any of this.** The counts are always recalculated
+from what people actually ended up doing, so swaps and reassignments are
+counted, not the original draw.
+
+The **Tasks** tab shows the running tally: each person's total, and a
+breakdown of every chore with how many times they've done it.
+
+### Drawing up a week
+
+Tap **Draw up this week** and you get two choices:
+
+- **Share them out for me** — the app allocates everything.
+- **I'll allocate them myself** — the week is created empty and you tap each
+  chore to choose who does it.
+
+If you start allocating by hand and run out of patience, **Fill the rest** hands
+the remainder to the app. Anything you already chose is kept exactly as it is,
+and the automatic pass balances around those choices rather than ignoring them.
+
+You can also leave a chore deliberately unallocated — open it and choose
+**Leave it unallocated**.
+
+### Notes on chores
+
+Each chore can carry a standing note — "must be done before 5pm", "bins go out
+Tuesday night", "use the good polish". It shows with the chore every week, in
+the week list and when allocating it.
+
+Notes are saved with each week as it's drawn up, so changing a note later won't
+rewrite what past weeks said.
 
 ---
 
 ## Tuning it
 
-Getting the weights right takes a few weeks of real use. Adjust them in
-**Manage** whenever something feels off — it only affects future weeks.
-
-If the roster itself needs adjusting, open `js/schedule.js`. The four dials are
-at the very top of the file, each with a comment explaining what it does:
+If the roster needs adjusting, open `js/schedule.js`. The four dials are at the
+very top of the file, each with a comment explaining what it does:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `TRAILING_WEEKS` | 6 | How far back fairness looks. Lower reacts faster, higher smooths more. |
-| `TIE_TOLERANCE` | 1 | How close two scores must be to count as tied. Higher means more shuffle, lower means stricter fairness. |
+| `HISTORY_WEEKS` | 0 | How far back the counts look. 0 means all time, which is what makes the totals even out long-term. Set a number to make old history stop counting. |
+| `COUNT_TOLERANCE` | 1 | How close to the lowest count you have to be to still be in the running. 0 is strictest and most predictable; higher means more variety and slower evening-out. |
 | `REPEAT_PENALTY_WEEKS` | 1 | How long before someone can get the same chore again. Set to 0 to allow repeats. |
 | `MAX_WEEKLY_SHARE` | 1.3 | Ceiling on one person's load in a single week, as a multiple of a fair share. Raise it to let people catch up faster after being away. |
 
@@ -323,9 +340,10 @@ mode, it's saving to itself.
 The page is open in something other than Safari. iOS only offers it there.
 
 **The roster looks unfair.**
-Have a look at the **Balance** tab first — it shows the last six weeks, and a
-spread of a few points is normal and evens out. If it's genuinely lopsided, the
-weights are usually the culprit rather than the algorithm.
+Check the **Tasks** tab — it shows exactly how many times each person has done
+each chore. A difference of one or two is normal and evens out. If one person is
+genuinely ahead, it's usually because they were away, or because a chore is
+adults-only and so can only go to some people.
 
 ---
 

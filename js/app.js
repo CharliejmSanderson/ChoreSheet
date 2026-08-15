@@ -17,14 +17,14 @@ import {
 
 import {
   generateWeek, weekIdFor, nextWeekId, prevWeekId,
-  formatWeekRange, DAY_LABELS,
+  formatWeekRange, DAY_LABELS, unassignedCount,
 } from './schedule.js';
 
 import { downloadICS } from './ics.js';
 import { h, clear, icon, personDot, toast, confirmSheet } from './ui.js';
 
 import {
-  weekView, balanceView, activityView, manageView,
+  weekView, tasksView, activityView, manageView,
   reassignSheet, generateSheet, swapSheet, exportSheet,
   identitySheet, personSheet, choreSheet,
 } from './views.js';
@@ -41,7 +41,7 @@ const state = {
 
 const TABS = [
   { id: 'week', label: 'Week', icon: 'week' },
-  { id: 'balance', label: 'Balance', icon: 'balance' },
+  { id: 'tasks', label: 'Tasks', icon: 'balance' },
   { id: 'activity', label: 'Activity', icon: 'activity' },
   { id: 'manage', label: 'Manage', icon: 'manage' },
 ];
@@ -96,7 +96,8 @@ const actions = {
       weekId,
       members: data.members,
       existing,
-      onConfirm: (unavailable) => actions.runGenerate(weekId, unavailable, !!existing),
+      onConfirm: (unavailable, fill) =>
+        actions.runGenerate(weekId, unavailable, !!existing, fill),
     });
   },
 
@@ -104,38 +105,74 @@ const actions = {
     actions.openGenerate(weekId);
   },
 
-  async runGenerate(weekId, unavailable, isRedraw) {
+  /**
+   * Draw up a week.
+   * fill 'auto'   — share everything out
+   *      'manual' — create it empty, to be allocated by hand
+   */
+  async runGenerate(weekId, unavailable, isRedraw, fill = 'auto') {
     const week = generateWeek({
       weekId,
       chores: data.chores,
       members: data.members,
       unavailable,
       history: data.weeks.filter((w) => w.id !== weekId),
+      fill,
     });
 
     week.generatedBy = whoName();
-
-    // Anything left unassigned means nobody was eligible — worth saying out
-    // loud rather than letting a chore quietly vanish.
-    const orphaned = week.assignments.filter((a) =>
-      a.type === 'weekly' ? !a.assignedTo : Object.values(a.days || {}).some((v) => !v));
-
     await saveWeek(week);
+
     await logActivity({
-      action: isRedraw ? 'Redrew the week' : 'Drew up the week',
+      action: isRedraw
+        ? 'Redrew the week'
+        : (fill === 'manual' ? 'Started the week to allocate by hand' : 'Drew up the week'),
       context: formatWeekRange(weekId),
-      after: unavailable.length
-        ? `${unavailable.map(nameOf).join(', ')} marked away`
-        : null,
+      after: unavailable.length ? `${unavailable.map(nameOf).join(', ')} marked away` : null,
       weekId,
     });
 
     state.weekId = weekId;
     render();
 
-    toast(orphaned.length
+    if (fill === 'manual') {
+      toast('Empty week ready — tap a chore to allocate');
+      return;
+    }
+
+    // A chore with nobody eligible would otherwise vanish quietly.
+    const orphaned = unassignedCount(week);
+    toast(orphaned
       ? 'Drawn up — some chores had nobody eligible'
       : (isRedraw ? 'Week redrawn' : 'Week drawn up'));
+  },
+
+  /** Finish a part-allocated week, keeping every choice already made. */
+  async fillRest(weekId) {
+    const existing = data.weeks.find((w) => w.id === weekId);
+    if (!existing) return;
+
+    const filled = generateWeek({
+      weekId,
+      chores: data.chores,
+      members: data.members,
+      unavailable: existing.unavailable || [],
+      history: data.weeks.filter((w) => w.id !== weekId),
+      fill: 'rest',
+      preserve: existing,
+    });
+
+    const before = unassignedCount(existing);
+    await updateWeekAssignments(weekId, filled.assignments);
+    await logActivity({
+      action: 'Filled in the rest of the week',
+      context: formatWeekRange(weekId),
+      after: `${before - unassignedCount(filled)} chores allocated automatically`,
+      weekId,
+    });
+
+    render();
+    toast('Rest of the week filled in');
   },
 
   /* --- Reassigning ------------------------------------------------------ */
@@ -171,15 +208,17 @@ const actions = {
 
     await updateWeekAssignments(weekId, assignments);
     await logActivity({
-      action: 'Reassigned a chore',
+      action: memberId ? 'Reassigned a chore' : 'Unallocated a chore',
       context: `${target.choreName}${day ? ` · ${DAY_LABELS[day]}` : ''}`,
       before: nameOf(previous),
-      after: nameOf(memberId),
+      after: memberId ? nameOf(memberId) : 'nobody',
       weekId,
     });
 
     render();
-    toast(`${target.choreName} → ${nameOf(memberId)}`);
+    toast(memberId
+      ? `${target.choreName} → ${nameOf(memberId)}`
+      : `${target.choreName} left unallocated`);
   },
 
   /* --- Swapping --------------------------------------------------------- */
@@ -300,7 +339,7 @@ const actions = {
       onSave: async (draft) => {
         const payload = {
           name: draft.name.trim(),
-          weight: Number(draft.weight) || 0,
+          notes: (draft.notes || '').trim(),
           frequency: draft.frequency,
           adultOnly: draft.adultOnly,
           active: draft.active,
@@ -309,7 +348,9 @@ const actions = {
         if (chore) {
           const changes = [];
           if (payload.name !== chore.name) changes.push(`renamed from ${chore.name}`);
-          if (payload.weight !== chore.weight) changes.push(`weight ${chore.weight} → ${payload.weight}`);
+          if (payload.notes !== (chore.notes || '')) {
+            changes.push(payload.notes ? `note: "${payload.notes}"` : 'note removed');
+          }
           if (payload.frequency !== chore.frequency) changes.push(`now ${payload.frequency}`);
           if (payload.adultOnly !== chore.adultOnly) {
             changes.push(payload.adultOnly ? 'now adults only' : 'no longer adults only');
@@ -329,7 +370,7 @@ const actions = {
           await addChore(payload);
           await logActivity({
             action: 'Added a chore',
-            after: `${payload.name} (weight ${payload.weight}, ${payload.frequency})`,
+            after: `${payload.name} (${payload.frequency})`,
           });
           toast('Chore added');
         }
@@ -405,7 +446,7 @@ function render() {
   }
 
   if (state.tab === 'week') main.append(weekView(ctx));
-  else if (state.tab === 'balance') main.append(balanceView(ctx));
+  else if (state.tab === 'tasks') main.append(tasksView(ctx));
   else if (state.tab === 'activity') main.append(activityView(ctx));
   else main.append(manageView(ctx));
 

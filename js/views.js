@@ -1,21 +1,21 @@
 /* ============================================================================
    views.js — the four screens.
 
-   Every view is a function that takes a context object and returns a DOM node.
-   They never write data directly; they call functions on `ctx.actions`, which
-   live in app.js. That keeps "what the screen looks like" separate from "what
-   happens when you tap it".
+   Every view is a function taking a context object and returning a DOM node.
+   Views never write data; they call functions on `ctx.actions`, which live in
+   app.js. That keeps "what the screen looks like" apart from "what happens
+   when you tap it".
    ========================================================================== */
 
 import { h, icon, personChip, personDot, tapeVar, timeAgo, openSheet, closeSheet } from './ui.js';
 import {
-  DAYS, DAY_LABELS, TRAILING_WEEKS,
-  formatWeekRange, datesOfWeek, weekIdFor, computeScores,
-  isEligible, toISODate,
+  DAYS, DAY_LABELS, HISTORY_WEEKS,
+  formatWeekRange, datesOfWeek, weekIdFor, computeCounts, countFor,
+  isEligible, toISODate, unassignedCount, totalJobs,
 } from './schedule.js';
 
 /* ---------------------------------------------------------------------------
-   WEEK VIEW — the home screen, and the thing people actually open the app for
+   WEEK VIEW — the home screen
    ------------------------------------------------------------------------ */
 
 export function weekView(ctx) {
@@ -31,12 +31,26 @@ export function weekView(ctx) {
     return wrap;
   }
 
-  // Who's sitting this week out
+  // A part-filled week needs an obvious way to finish it off.
+  const missing = unassignedCount(week);
+  if (missing > 0) {
+    wrap.append(h('div', { class: 'card', style: { 'border-color': 'var(--warn-line)' } },
+      h('div', { class: 'row row-between wrap', style: { gap: '10px' } },
+        h('div', { class: 'grow' },
+          h('div', { style: { 'font-weight': '650' } },
+            `${missing} of ${totalJobs(week)} still to allocate`),
+          h('div', { class: 'small muted' },
+            'Tap any chore to pick someone, or let the app finish the rest.')),
+        h('button', {
+          class: 'btn btn-sm',
+          onclick: () => actions.fillRest(week.id),
+        }, icon('wand', 15), 'Fill the rest'))));
+  }
+
   if (week.unavailable?.length) {
     const names = week.unavailable
       .map((id) => members.find((m) => m.id === id)?.name)
-      .filter(Boolean)
-      .join(', ');
+      .filter(Boolean).join(', ');
     if (names) {
       wrap.append(h('div', { class: 'banner' },
         icon('warn', 17),
@@ -46,7 +60,6 @@ export function weekView(ctx) {
     }
   }
 
-  // "Just mine" filter — only offered once someone has said who they are
   if (who) {
     wrap.append(h('div', { class: 'seg-control', style: { 'margin-bottom': '12px' } },
       h('button', {
@@ -70,7 +83,7 @@ export function weekView(ctx) {
       h('h2', {}, state.mineOnly ? 'Nothing on for you' : 'No chores in this week'),
       h('p', {}, state.mineOnly
         ? 'Enjoy it. Switch to Everyone to see the full list.'
-        : 'Add some chores under Manage, then generate the week again.')));
+        : 'Add some chores under Manage, then draw the week up again.')));
   } else {
     const list = h('div', { class: 'card card-flush stagger' });
     for (const a of visible) list.append(choreRow(ctx, week, a));
@@ -85,42 +98,32 @@ function weekNav(ctx, isCurrent) {
   const { state, actions } = ctx;
   return h('div', { class: 'week-nav' },
     h('button', {
-      class: 'nav-btn',
-      'aria-label': 'Previous week',
+      class: 'nav-btn', 'aria-label': 'Previous week',
       onclick: () => actions.stepWeek(-1),
     }, icon('left')),
     h('div', { style: { 'text-align': 'center', flex: '1 1 auto', 'min-width': '0' } },
-      h('div', { class: 'when' }, isCurrent ? 'This week' : label(state.weekId)),
+      h('div', { class: 'when' },
+        isCurrent ? 'This week' : (state.weekId > weekIdFor() ? 'Coming up' : 'Past week')),
       h('h1', {}, formatWeekRange(state.weekId))),
     h('button', {
-      class: 'nav-btn',
-      'aria-label': 'Next week',
+      class: 'nav-btn', 'aria-label': 'Next week',
       onclick: () => actions.stepWeek(1),
     }, icon('right')));
 }
 
-function label(weekId) {
-  const current = weekIdFor();
-  if (weekId > current) return 'Coming up';
-  return 'Past week';
-}
-
 function notGeneratedYet(ctx) {
   const { state, actions, chores, members } = ctx;
-  const activeChores = chores.filter((c) => c.active);
-  const activeMembers = members.filter((m) => m.active);
-  const ready = activeChores.length > 0 && activeMembers.length > 0;
+  const ready = chores.filter((c) => c.active).length > 0
+    && members.filter((m) => m.active).length > 0;
 
   return h('div', { class: 'card empty' },
     h('h2', {}, 'This week hasn\'t been drawn up'),
     h('p', {}, ready
-      ? 'Everyone gets chores based on what they\'ve carried the last few weeks.'
+      ? 'Share the chores out automatically, or pick who does what yourself.'
       : 'Add at least one person and one chore under Manage first.'),
     ready
-      ? h('button', {
-          class: 'btn',
-          onclick: () => actions.openGenerate(state.weekId),
-        }, icon('wand', 17), 'Draw up this week')
+      ? h('button', { class: 'btn', onclick: () => actions.openGenerate(state.weekId) },
+          icon('wand', 17), 'Draw up this week')
       : h('button', { class: 'btn btn-ghost', onclick: () => actions.setTab('manage') },
           'Go to Manage'));
 }
@@ -129,10 +132,14 @@ function notGeneratedYet(ctx) {
  *  seven-day strip where each day can be reassigned on its own. */
 function choreRow(ctx, week, assignment) {
   const { members, actions, state } = ctx;
+
   const meta = h('div', { class: 'chore-meta' },
-    h('span', { class: 'weight-tag' }, `weight ${assignment.weight}`),
-    assignment.adultOnly ? h('span', {}, 'Adults only') : null,
-    h('span', {}, assignment.type === 'daily' ? 'Different each day' : 'All week'));
+    h('span', {}, assignment.type === 'daily' ? 'Different each day' : 'All week'),
+    assignment.adultOnly ? h('span', {}, '· Adults only') : null);
+
+  const note = assignment.notes
+    ? h('div', { class: 'chore-note' }, h('span', { 'aria-hidden': 'true' }, '!'), assignment.notes)
+    : null;
 
   if (assignment.type === 'weekly') {
     return h('button', {
@@ -141,7 +148,8 @@ function choreRow(ctx, week, assignment) {
     },
       h('div', { class: 'grow' },
         h('div', { class: 'chore-name' }, assignment.choreName),
-        meta),
+        meta,
+        note),
       personChip(members, assignment.assignedTo));
   }
 
@@ -152,23 +160,22 @@ function choreRow(ctx, week, assignment) {
   for (const day of DAYS) {
     const memberId = assignment.days?.[day];
     const member = members.find((m) => m.id === memberId);
-    const mine = state.mineOnly && memberId === ctx.who;
 
     strip.append(h('button', {
       class: `day-cell${dates[day] === today ? ' is-today' : ''}`,
-      style: mine ? { 'border-color': tapeVar(members, memberId) } : {},
-      'aria-label': `${assignment.choreName}, ${DAY_LABELS[day]}: ${member?.name || 'nobody'}`,
+      'aria-label': `${assignment.choreName}, ${DAY_LABELS[day]}: ${member?.name || 'nobody yet'}`,
       onclick: () => actions.openReassign(week.id, assignment, day),
     },
-      h('span', { class: 'day-label' }, day.slice(0, 1).toUpperCase() + day.slice(1, 2)),
+      h('span', { class: 'day-label' }, day[0].toUpperCase() + day[1]),
       member
         ? personDot(members, memberId, member.name)
-        : h('span', { class: 'dot', style: { '--tape': 'var(--ink-3)' } }, '–')));
+        : h('span', { class: 'dot dot-empty' }, '+')));
   }
 
-  return h('div', { class: 'chore-item', style: { display: 'block', cursor: 'default' } },
+  return h('div', { class: 'chore-item chore-item-block' },
     h('div', { class: 'chore-name' }, assignment.choreName),
     meta,
+    note,
     strip);
 }
 
@@ -184,85 +191,110 @@ function weekActions(ctx, week) {
 }
 
 /* ---------------------------------------------------------------------------
-   BALANCE VIEW
-
-   The signature screen: one bar, split by person. Even segments mean an even
-   load. The dashed notches show where a perfectly even split would fall, so
-   you can see imbalance without reading any numbers.
+   TASKS VIEW — who's done what, and how often
    ------------------------------------------------------------------------ */
 
-export function balanceView(ctx) {
-  const { members, weeks } = ctx;
+export function tasksView(ctx) {
+  const { members, chores, weeks } = ctx;
   const active = members.filter((m) => m.active);
-  const scores = computeScores(weeks, active, { trailingWeeks: TRAILING_WEEKS });
-  const total = Object.values(scores).reduce((sum, v) => sum + v, 0);
+  const counts = computeCounts(weeks, members, { historyWeeks: HISTORY_WEEKS });
+  const grandTotal = active.reduce((sum, m) => sum + (counts[m.id]?.total || 0), 0);
 
   const wrap = h('div', {});
   wrap.append(h('div', { class: 'section-head' },
     h('div', {},
-      h('div', { class: 'eyebrow' }, `Last ${TRAILING_WEEKS} weeks`),
-      h('h2', {}, 'Who\'s carried what'))));
+      h('div', { class: 'eyebrow' },
+        HISTORY_WEEKS > 0 ? `Last ${HISTORY_WEEKS} weeks` : 'All time'),
+      h('h2', {}, 'Who\'s done what'))));
 
-  if (active.length === 0 || total === 0) {
+  if (active.length === 0 || grandTotal === 0) {
     wrap.append(h('div', { class: 'card empty' },
-      h('h2', {}, 'Nothing to weigh up yet'),
-      h('p', {}, 'Once a week or two has been drawn up, the balance shows here.')));
+      h('h2', {}, 'Nothing counted yet'),
+      h('p', {}, 'Once a week has been drawn up, the tallies show here.')));
     return wrap;
   }
 
-  const card = h('div', { class: 'card' });
+  /* Overall split, as one bar ------------------------------------------- */
 
-  const strip = h('div', { class: 'balance-strip', role: 'img',
-    'aria-label': active.map((m) => `${m.name}: ${scores[m.id]}`).join(', ') });
+  const card = h('div', { class: 'card' });
+  const strip = h('div', {
+    class: 'balance-strip', role: 'img',
+    'aria-label': active.map((m) => `${m.name}: ${counts[m.id]?.total || 0} tasks`).join(', '),
+  });
 
   for (const member of active) {
-    const value = scores[member.id] || 0;
+    const value = counts[member.id]?.total || 0;
     strip.append(h('div', {
       class: 'balance-seg',
       style: { '--tape': tapeVar(members, member.id), 'flex-grow': String(Math.max(value, 0.001)) },
       title: `${member.name}: ${value}`,
-    }, value > 0 && total / active.length > 4 ? String(value) : ''));
+    }, value > 0 && grandTotal / active.length > 6 ? String(value) : ''));
   }
 
-  // Even-split notches sit on top of the segments.
   const ticks = h('div', { class: 'balance-ticks', 'aria-hidden': 'true' });
   for (let i = 0; i < active.length; i++) ticks.append(h('div', { class: 'balance-tick' }));
   strip.append(ticks);
 
   card.append(strip);
   card.append(h('p', { class: 'small muted', style: { margin: '10px 0 0' } },
-    'Dashes mark an even split. A segment wider than its dash means that person is carrying more.'));
-
-  const legend = h('div', { class: 'balance-legend' });
-  const sorted = [...active].sort((a, b) => (scores[b.id] || 0) - (scores[a.id] || 0));
-  for (const member of sorted) {
-    legend.append(h('div', { class: 'legend-item' },
-      h('span', { class: 'legend-swatch', style: { '--tape': tapeVar(members, member.id) } }),
-      h('span', {}, member.name),
-      h('span', { class: 'legend-value' }, String(scores[member.id] || 0))));
-  }
-  card.append(legend);
+    'Total tasks done by each person. Dashes mark an even split.'));
   wrap.append(card);
 
-  // Spread between the busiest and least busy person — the one number that
-  // actually answers "is this fair?".
-  const values = active.map((m) => scores[m.id] || 0);
-  const spread = Math.max(...values) - Math.min(...values);
-  wrap.append(h('div', { class: 'card' },
-    h('div', { class: 'row row-between' },
-      h('div', {},
-        h('div', { class: 'eyebrow' }, 'Spread'),
-        h('div', { class: 'small muted' },
-          spread <= 3
-            ? 'Well balanced. No action needed.'
-            : 'Worth a look — the next few weeks should even this out.')),
-      h('div', { style: { 'font-family': 'var(--font-mono)', 'font-size': '1.5rem' } }, String(spread)))));
+  /* Per-person breakdown -------------------------------------------------- */
+
+  wrap.append(h('div', { class: 'section-head' },
+    h('div', {},
+      h('div', { class: 'eyebrow' }, 'Tap a name for the detail'),
+      h('h2', {}, 'Every task, counted'))));
+
+  const sorted = [...active].sort((a, b) => (counts[b.id]?.total || 0) - (counts[a.id]?.total || 0));
+
+  for (const member of sorted) {
+    const total = counts[member.id]?.total || 0;
+
+    // Show current chores plus anything they've done that has since been
+    // deleted, so old history doesn't silently vanish from the tallies.
+    const knownIds = new Set(chores.map((c) => c.id));
+    const rows = chores
+      .map((c) => ({ id: c.id, name: c.name, active: c.active, n: countFor(counts, member.id, c.id) }))
+      .concat(Object.keys(counts[member.id]?.byChore || {})
+        .filter((id) => !knownIds.has(id))
+        .map((id) => ({ id, name: nameFromHistory(weeks, id), active: false, deleted: true,
+                        n: countFor(counts, member.id, id) })))
+      .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+
+    const body = h('div', { class: 'count-list' });
+    for (const row of rows) {
+      body.append(h('div', { class: `count-row${row.n === 0 ? ' is-zero' : ''}` },
+        h('span', { class: 'grow' }, row.name,
+          row.deleted ? h('span', { class: 'small muted' }, ' (deleted)')
+            : (!row.active ? h('span', { class: 'small muted' }, ' (paused)') : null)),
+        h('span', { class: 'count-value' }, String(row.n))));
+    }
+
+    wrap.append(h('details', { class: 'person-block' },
+      h('summary', {},
+        personDot(members, member.id, member.name),
+        h('span', { class: 'grow' }, member.name),
+        h('span', { class: 'count-total' }, `${total}`),
+        h('span', { class: 'summary-chevron', 'aria-hidden': 'true' }, icon('right', 15))),
+      body));
+  }
 
   return wrap;
 }
 
+/** Recover a deleted chore's name from the week records that still mention it. */
+function nameFromHistory(weeks, choreId) {
+  for (const week of weeks) {
+    const found = (week.assignments || []).find((a) => a.choreId === choreId);
+    if (found?.choreName) return found.choreName;
+  }
+  return 'Removed chore';
+}
+
 /* ---------------------------------------------------------------------------
-   ACTIVITY VIEW — the "no sneakiness" record
+   ACTIVITY VIEW
    ------------------------------------------------------------------------ */
 
 export function activityView(ctx) {
@@ -284,7 +316,6 @@ export function activityView(ctx) {
   const card = h('div', { class: 'card card-flush' });
   for (const entry of log) {
     const { before, after, context } = entry.details || {};
-
     card.append(h('div', { class: 'log-entry' },
       h('div', { class: 'log-head' },
         h('span', { class: 'log-who' }, entry.personName || 'Someone'),
@@ -297,20 +328,17 @@ export function activityView(ctx) {
             after ? h('span', { class: 'log-after' }, after) : null)
         : null));
   }
-
   wrap.append(card);
   return wrap;
 }
 
 /* ---------------------------------------------------------------------------
-   MANAGE VIEW — people and chores
+   MANAGE VIEW
    ------------------------------------------------------------------------ */
 
 export function manageView(ctx) {
   const { members, chores, actions } = ctx;
   const wrap = h('div', {});
-
-  /* People ---------------------------------------------------------------- */
 
   wrap.append(h('div', { class: 'section-head' },
     h('div', {},
@@ -340,8 +368,6 @@ export function manageView(ctx) {
     wrap.append(list);
   }
 
-  /* Chores ---------------------------------------------------------------- */
-
   wrap.append(h('div', { class: 'section-head' },
     h('div', {},
       h('div', { class: 'eyebrow' }, `${chores.filter((c) => c.active).length} in rotation`),
@@ -352,19 +378,19 @@ export function manageView(ctx) {
   if (!chores.length) {
     wrap.append(h('div', { class: 'card empty' },
       h('h2', {}, 'No chores yet'),
-      h('p', {}, 'Add them with a weight — higher means more of a pain to do.')));
+      h('p', {}, 'Add the jobs that need doing each week.')));
   } else {
     const list = h('div', { class: 'card card-flush' });
-    for (const chore of [...chores].sort((a, b) => b.weight - a.weight)) {
+    for (const chore of [...chores].sort((a, b) => a.name.localeCompare(b.name))) {
       list.append(h('div', { class: `list-row${chore.active ? '' : ' is-off'}` },
-        h('span', { class: 'weight-tag', style: { 'font-size': '0.82rem', padding: '3px 7px' } },
-          String(chore.weight)),
         h('div', { class: 'grow' },
           h('div', { style: { 'font-weight': '600' } }, chore.name),
           h('div', { class: 'small muted' },
             [chore.frequency === 'daily' ? 'Rotates daily' : 'One person all week',
              chore.adultOnly ? 'adults only' : null,
-             chore.active ? null : 'paused'].filter(Boolean).join(' · '))),
+             chore.active ? null : 'paused'].filter(Boolean).join(' · ')),
+          chore.notes ? h('div', { class: 'chore-note' },
+            h('span', { 'aria-hidden': 'true' }, '!'), chore.notes) : null),
         h('button', { class: 'btn btn-quiet btn-sm', onclick: () => actions.openChore(chore) },
           'Edit')));
     }
@@ -372,8 +398,8 @@ export function manageView(ctx) {
   }
 
   wrap.append(h('p', { class: 'small muted', style: { 'margin-top': '16px' } },
-    'Weights are relative — a chore weighted 3 counts for three times as much as a chore weighted 1. '
-    + 'Changing a weight only affects future weeks; past weeks keep the weight they were drawn up with.'));
+    'Chores are shared out by how many times each person has done them, so everyone '
+    + 'ends up doing each job about the same number of times. See the Tasks tab for the running count.'));
 
   wrap.append(h('div', { class: 'row', style: { 'margin-top': '18px' } },
     h('button', { class: 'btn btn-ghost btn-sm', onclick: () => actions.openIdentity() },
@@ -386,7 +412,7 @@ export function manageView(ctx) {
    SHEETS
    ------------------------------------------------------------------------ */
 
-/** Pick a person for a chore (or a single day of one). */
+/** Pick a person for a chore, or for one day of one. */
 export function reassignSheet({ week, assignment, day, members, current, onPick }) {
   const chore = { adultOnly: assignment.adultOnly };
 
@@ -394,6 +420,10 @@ export function reassignSheet({ week, assignment, day, members, current, onPick 
     h('h2', {}, assignment.choreName),
     h('p', { class: 'sheet-sub' },
       day ? `${DAY_LABELS[day]} · who's doing it?` : 'All week · who\'s doing it?'),
+    assignment.notes
+      ? h('div', { class: 'chore-note', style: { 'margin-bottom': '14px' } },
+          h('span', { 'aria-hidden': 'true' }, '!'), assignment.notes)
+      : null,
     h('div', { class: 'pick-list' },
       members.map((member) => {
         const eligible = isEligible(member, chore, week.unavailable || []);
@@ -409,13 +439,21 @@ export function reassignSheet({ week, assignment, day, members, current, onPick 
             member.id === current ? 'Doing it'
               : !member.active ? 'Paused'
               : (week.unavailable || []).includes(member.id) ? 'Away'
-              : member.ageRestricted && assignment.adultOnly ? 'Adults only'
-              : ''));
+              : member.ageRestricted && assignment.adultOnly ? 'Adults only' : ''));
       })),
+    current
+      ? h('button', {
+          class: 'btn btn-quiet btn-block',
+          style: { 'margin-top': '10px' },
+          onclick: () => { closeSheet(); onPick(null); },
+        }, 'Leave it unallocated')
+      : null,
   ]);
 }
 
-/** Choose who's around before drawing up a week. */
+/**
+ * Draw up a week: choose who's away, then automatic or by hand.
+ */
 export function generateSheet({ weekId, members, existing, onConfirm }) {
   const away = new Set();
 
@@ -423,14 +461,12 @@ export function generateSheet({ weekId, members, existing, onConfirm }) {
     const list = h('div', { class: 'pick-list' },
       members.filter((m) => m.active).map((member) =>
         h('button', {
-          class: 'pick',
-          'aria-pressed': 'false',
+          class: 'pick', 'aria-pressed': 'false',
           onclick: (event) => {
             const button = event.currentTarget;
             if (away.has(member.id)) away.delete(member.id); else away.add(member.id);
             button.setAttribute('aria-pressed', String(away.has(member.id)));
-            button.querySelector('.pick-state').textContent =
-              away.has(member.id) ? 'Away' : 'Here';
+            button.querySelector('.pick-state').textContent = away.has(member.id) ? 'Away' : 'Here';
           },
         },
           personDot(members, member.id, member.name),
@@ -444,24 +480,30 @@ export function generateSheet({ weekId, members, existing, onConfirm }) {
           ? 'This replaces the current list, including any changes made by hand.'
           : `Chores for ${formatWeekRange(weekId)}. Tap anyone who's away.`),
       list,
-      h('button', {
-        class: 'btn btn-block',
-        style: { 'margin-top': '14px' },
-        onclick: () => { close(); onConfirm([...away]); },
-      }, icon('wand', 17), existing ? 'Redraw' : 'Draw up the week'),
+      h('div', { class: 'stack', style: { 'margin-top': '16px' } },
+        h('button', {
+          class: 'btn btn-block',
+          onclick: () => { close(); onConfirm([...away], 'auto'); },
+        }, icon('wand', 17), 'Share them out for me'),
+        h('button', {
+          class: 'btn btn-ghost btn-block',
+          onclick: () => { close(); onConfirm([...away], 'manual'); },
+        }, 'I\'ll allocate them myself'),
+        h('p', { class: 'small muted', style: { margin: '2px 0 0', 'text-align': 'center' } },
+          'Allocating yourself? You can hand out as many as you like, then let the '
+          + 'app finish the rest.')),
     ];
   });
 }
 
-/** Two-step swap: pick one chore, then the one to swap it with. */
+/** Two-step swap: pick one job, then the one to swap it with. */
 export function swapSheet({ week, members, onSwap }) {
   const slots = [];
   for (const a of week.assignments || []) {
     if (a.type === 'daily') {
       for (const day of DAYS) {
         slots.push({
-          key: `${a.choreId}:${day}`,
-          assignment: a, day,
+          key: `${a.choreId}:${day}`, assignment: a, day,
           memberId: a.days?.[day] || null,
           label: `${a.choreName} · ${DAY_LABELS[day].slice(0, 3)}`,
         });
@@ -478,52 +520,46 @@ export function swapSheet({ week, members, onSwap }) {
   let first = null;
 
   const render = (close) => {
-    const heading = first
-      ? 'Now pick what to swap it with'
-      : 'Pick the chore to swap';
-
     const list = h('div', { class: 'pick-list' },
       slots.map((slot) => {
         const disabled = first && slot.key === first.key;
+        const member = members.find((m) => m.id === slot.memberId);
         return h('button', {
-          class: `pick${disabled ? ' is-disabled'  : ''}`,
+          class: `pick${disabled ? ' is-disabled' : ''}`,
           'aria-pressed': String(first?.key === slot.key),
           disabled,
           onclick: () => {
-            if (!first) {
-              first = slot;
-              refresh(close);
-            } else {
-              close();
-              onSwap(first, slot);
-            }
+            if (!first) { first = slot; refresh(); }
+            else { close(); onSwap(first, slot); }
           },
         },
-          personDot(members, slot.memberId, members.find((m) => m.id === slot.memberId)?.name || '?'),
+          member
+            ? personDot(members, slot.memberId, member.name)
+            : h('span', { class: 'dot dot-empty' }, '–'),
           h('span', { class: 'grow' }, slot.label),
-          h('span', { class: 'small muted' },
-            members.find((m) => m.id === slot.memberId)?.name || 'Nobody'));
+          h('span', { class: 'small muted' }, member?.name || 'Nobody'));
       }));
 
     return [
       h('h2', {}, 'Swap chores'),
-      h('p', { class: 'sheet-sub' }, heading + '. The change is instant — no approval needed.'),
+      h('p', { class: 'sheet-sub' },
+        (first ? 'Now pick what to swap it with' : 'Pick the chore to swap')
+        + '. The change is instant — no approval needed.'),
       list,
       first
         ? h('button', {
-            class: 'btn btn-ghost btn-block',
-            style: { 'margin-top': '12px' },
-            onclick: () => { first = null; refresh(close); },
+            class: 'btn btn-ghost btn-block', style: { 'margin-top': '12px' },
+            onclick: () => { first = null; refresh(); },
           }, 'Start over')
         : null,
     ];
   };
 
   const refresh = () => openSheet((close) => render(close));
-  return openSheet((close) => render(close));
+  return refresh();
 }
 
-/** Calendar export: everyone, or just one person. */
+/** Calendar export: everyone, or one person. */
 export function exportSheet({ week, members, onExport }) {
   return openSheet((close) => [
     h('h2', {}, 'Add to calendar'),
@@ -531,21 +567,16 @@ export function exportSheet({ week, members, onExport }) {
       'Downloads a calendar file to open in your calendar app. It\'s a snapshot — '
       + 'if chores change later, download it again.'),
     h('div', { class: 'pick-list' },
-      h('button', {
-        class: 'pick',
-        onclick: () => { close(); onExport(null); },
-      }, h('span', { class: 'grow' }, 'Everyone\'s chores')),
+      h('button', { class: 'pick', onclick: () => { close(); onExport(null); } },
+        h('span', { class: 'grow' }, 'Everyone\'s chores')),
       members.filter((m) => m.active).map((member) =>
-        h('button', {
-          class: 'pick',
-          onclick: () => { close(); onExport(member.id); },
-        },
+        h('button', { class: 'pick', onclick: () => { close(); onExport(member.id); } },
           personDot(members, member.id, member.name),
           h('span', { class: 'grow' }, `Just ${member.name}`)))),
   ]);
 }
 
-/** Who's using this device? Remembered per device, used to sign activity. */
+/** Who's using this device? */
 export function identitySheet({ members, current, onPick, dismissible = true }) {
   return openSheet((close) => [
     h('h2', {}, 'Who are you?'),
@@ -554,8 +585,7 @@ export function identitySheet({ members, current, onPick, dismissible = true }) 
     h('div', { class: 'pick-list' },
       members.filter((m) => m.active).map((member) =>
         h('button', {
-          class: 'pick',
-          'aria-pressed': String(member.id === current),
+          class: 'pick', 'aria-pressed': String(member.id === current),
           onclick: () => { close(); onPick(member.id); },
         },
           personDot(members, member.id, member.name),
@@ -607,8 +637,7 @@ export function personSheet({ member, onSave, onDelete }) {
           class: 'btn btn-block',
           onclick: () => {
             if (!draft.name.trim()) { nameInput.focus(); return; }
-            close();
-            onSave(draft);
+            close(); onSave(draft);
           },
         }, editing ? 'Save changes' : 'Add to the family'),
         editing
@@ -626,7 +655,7 @@ export function choreSheet({ chore, onSave, onDelete }) {
   const editing = !!chore;
   const draft = {
     name: chore?.name || '',
-    weight: chore?.weight ?? 1,
+    notes: chore?.notes || '',
     frequency: chore?.frequency || 'weekly',
     adultOnly: !!chore?.adultOnly,
     active: chore ? chore.active !== false : true,
@@ -639,7 +668,13 @@ export function choreSheet({ chore, onSave, onDelete }) {
       oninput: (e) => { draft.name = e.target.value; },
     });
 
-    const freq = h('div', { class: 'seg-control' });
+    const notesInput = h('textarea', {
+      class: 'input', rows: '2', maxlength: '200',
+      placeholder: 'e.g. Must be done before 5pm',
+      oninput: (e) => { draft.notes = e.target.value; },
+    });
+    notesInput.value = draft.notes;
+
     const weeklyBtn = h('button', { 'aria-pressed': String(draft.frequency === 'weekly') },
       'One person all week');
     const dailyBtn = h('button', { 'aria-pressed': String(draft.frequency === 'daily') },
@@ -652,7 +687,6 @@ export function choreSheet({ chore, onSave, onDelete }) {
     };
     weeklyBtn.addEventListener('click', () => setFreq('weekly'));
     dailyBtn.addEventListener('click', () => setFreq('daily'));
-    freq.append(weeklyBtn, dailyBtn);
 
     return [
       h('h2', {}, editing ? 'Edit chore' : 'Add a chore'),
@@ -660,15 +694,14 @@ export function choreSheet({ chore, onSave, onDelete }) {
         h('div', { class: 'field' }, h('label', {}, 'Chore'), nameInput),
 
         h('div', { class: 'field' },
-          h('label', {}, 'How much of a pain is it?'),
-          h('input', {
-            class: 'input', type: 'number', min: '0', step: '0.5', value: String(draft.weight),
-            oninput: (e) => { draft.weight = e.target.value; },
-          }),
+          h('label', {}, 'Note (optional)'),
+          notesInput,
           h('div', { class: 'small muted' },
-            'Relative to your other chores. Most families end up using 1 to 5.')),
+            'Shown with the chore every week — timings, instructions, anything worth remembering.')),
 
-        h('div', { class: 'field' }, h('label', {}, 'How often'), freq),
+        h('div', { class: 'field' },
+          h('label', {}, 'How often'),
+          h('div', { class: 'seg-control' }, weeklyBtn, dailyBtn)),
 
         h('label', { class: 'switch' },
           h('div', {},
@@ -692,8 +725,7 @@ export function choreSheet({ chore, onSave, onDelete }) {
           class: 'btn btn-block',
           onclick: () => {
             if (!draft.name.trim()) { nameInput.focus(); return; }
-            close();
-            onSave(draft);
+            close(); onSave(draft);
           },
         }, editing ? 'Save changes' : 'Add chore'),
 
