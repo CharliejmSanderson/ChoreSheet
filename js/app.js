@@ -74,6 +74,38 @@ function context() {
    ACTIONS
    ------------------------------------------------------------------------ */
 
+/* ---------------------------------------------------------------------------
+   BATCHING RENDERS
+
+   A single action often causes more than one underlying write — saving a
+   week's assignments AND logging it to the activity feed, say — and each
+   write, once confirmed, tells the app to re-render. Left alone that's 2-3
+   visible re-renders back to back for what should look like one update.
+
+   Wrapping an action with `batched` suppresses those in-between renders while
+   it's running, and does exactly one, right when it's actually finished —
+   whether that render was going to be triggered by the store's own change
+   notifications or by the action's own code, both funnel through the same
+   suppression check, so it doesn't matter how many writes happened inside.
+
+   This only wraps actions that talk to the store. Pure navigation (switching
+   tabs, moving between weeks) never touches it and stays instant.
+   ------------------------------------------------------------------------ */
+
+let suppressRender = 0;
+
+function batched(fn) {
+  return async (...args) => {
+    suppressRender++;
+    try {
+      await fn(...args);
+    } finally {
+      suppressRender--;
+      if (suppressRender === 0) render();
+    }
+  };
+}
+
 const actions = {
   setTab(tab) {
     state.tab = tab;
@@ -148,7 +180,6 @@ const actions = {
 
     state.weekId = weekId;
     state.undo = undoSnapshot;
-    render();
 
     if (fill === 'manual') {
       toast('Empty week ready — tap a chore to allocate');
@@ -178,7 +209,6 @@ const actions = {
       weekId: snap.weekId,
     });
 
-    render();
     toast('Redraw undone');
   },
 
@@ -207,7 +237,6 @@ const actions = {
       weekId,
     });
 
-    render();
     toast('Rest of the week filled in');
   },
 
@@ -252,7 +281,6 @@ const actions = {
       weekId,
     });
 
-    render();
     toast(memberId
       ? `${target.choreName} → ${nameOf(memberId)}`
       : `${target.choreName} left unallocated`);
@@ -302,7 +330,6 @@ const actions = {
       weekId,
     });
 
-    render();
     toast('Swapped');
   },
 
@@ -327,7 +354,7 @@ const actions = {
   openPerson(member) {
     personSheet({
       member,
-      onSave: async (draft) => {
+      onSave: batched(async (draft) => {
         if (member) {
           const changes = [];
           if (draft.name !== member.name) changes.push(`name ${member.name} → ${draft.name}`);
@@ -349,9 +376,10 @@ const actions = {
           await logActivity({ action: 'Added a person', after: draft.name.trim() });
           toast(`${draft.name.trim()} added`);
         }
-        render();
-      },
+      }),
       onDelete: async () => {
+        // The confirm dialog can sit open indefinitely — only the actual
+        // write afterward should suppress renders, not the waiting.
         const ok = await confirmSheet({
           title: `Remove ${member.name}?`,
           body: 'Past weeks keep their record, but they won\'t be given any new chores. '
@@ -361,11 +389,12 @@ const actions = {
         });
         if (!ok) return;
 
-        await removeMember(member.id);
-        await logActivity({ action: 'Removed a person', before: member.name });
-        if (getWho() === member.id) setWho(null);
-        render();
-        toast(`${member.name} removed`);
+        await batched(async () => {
+          await removeMember(member.id);
+          await logActivity({ action: 'Removed a person', before: member.name });
+          if (getWho() === member.id) setWho(null);
+          toast(`${member.name} removed`);
+        })();
       },
     });
   },
@@ -375,7 +404,7 @@ const actions = {
   openChore(chore) {
     choreSheet({
       chore,
-      onSave: async (draft) => {
+      onSave: batched(async (draft) => {
         const payload = {
           name: draft.name.trim(),
           notes: (draft.notes || '').trim(),
@@ -414,8 +443,7 @@ const actions = {
           });
           toast('Chore added');
         }
-        render();
-      },
+      }),
       onDelete: async () => {
         const ok = await confirmSheet({
           title: `Delete ${chore.name}?`,
@@ -426,10 +454,11 @@ const actions = {
         });
         if (!ok) return;
 
-        await removeChore(chore.id);
-        await logActivity({ action: 'Deleted a chore', before: chore.name });
-        render();
-        toast('Chore deleted');
+        await batched(async () => {
+          await removeChore(chore.id);
+          await logActivity({ action: 'Deleted a chore', before: chore.name });
+          toast('Chore deleted');
+        })();
       },
     });
   },
@@ -460,6 +489,23 @@ const actions = {
     if (ok) { resetLocal(); render(); toast('Preview data cleared'); }
   },
 };
+
+/* ---------------------------------------------------------------------------
+   APPLY BATCHING
+
+   These are the actions that write to the store and had their manual
+   render() calls removed above — wrapping them here (rather than inline)
+   keeps the full list in one place, the same way the identity list below
+   does. This has to run BEFORE the identity-guard wrapping, so that guarded
+   actions like fillRest end up as guard(batch(original)) — identity checked
+   first, then the batched write.
+   ------------------------------------------------------------------------ */
+
+const BATCH_RENDER = ['reassign', 'swap', 'runGenerate', 'undoRedraw', 'fillRest'];
+
+for (const name of BATCH_RENDER) {
+  actions[name] = batched(actions[name]);
+}
 
 /* ---------------------------------------------------------------------------
    REQUIRE IDENTITY BEFORE EDITING
@@ -574,7 +620,7 @@ function render() {
    ------------------------------------------------------------------------ */
 
 async function boot() {
-  onChange(render);
+  onChange(() => { if (suppressRender === 0) render(); });
   await initStore();
   render();
 

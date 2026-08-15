@@ -173,37 +173,41 @@ function unlockBody() {
 }
 
 /** Makes `handle` a real drag-to-dismiss grip: follow the finger, and either
- *  dismiss or snap back depending on how far it travelled. */
+ *  dismiss or snap back depending on how far it travelled.
+ *
+ *  This listens on `window` for the move/up events, rather than relying on
+ *  the handle capturing the pointer — pointer capture support has real gaps
+ *  on iOS Safari, and when it doesn't work, the drag silently stops tracking
+ *  the moment a finger moves past the handle's own small area. Listening on
+ *  window sidesteps that entirely: once a drag starts, every subsequent move
+ *  anywhere on screen is caught, with no capture API involved. */
 function makeDraggable(panel, handle, onDismiss) {
-  let dragging = false;
+  const DISMISS_AFTER = 90; // px of downward drag that counts as "let go"
   let startY = 0;
   let offset = 0;
-  const DISMISS_AFTER = 90; // px of downward drag that counts as "let go"
 
-  handle.addEventListener('pointerdown', (event) => {
-    dragging = true;
-    startY = event.clientY;
-    panel.style.transition = 'none';
-    handle.setPointerCapture(event.pointerId);
-  });
-
-  handle.addEventListener('pointermove', (event) => {
-    if (!dragging) return;
+  const onMove = (event) => {
     offset = Math.max(0, event.clientY - startY); // only allow dragging down
     panel.style.transform = `translateY(${offset}px)`;
-  });
+  };
 
-  const release = () => {
-    if (!dragging) return;
-    dragging = false;
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
     panel.style.transition = '';
     if (offset > DISMISS_AFTER) onDismiss();
     else panel.style.transform = '';
     offset = 0;
   };
 
-  handle.addEventListener('pointerup', release);
-  handle.addEventListener('pointercancel', release);
+  handle.addEventListener('pointerdown', (event) => {
+    startY = event.clientY;
+    panel.style.transition = 'none';
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  });
 }
 
 /**
@@ -218,14 +222,10 @@ export function openSheet(build) {
   // with a thumb rather than the few pixels the visible bar occupies.
   const dragHandle = h('div', { class: 'sheet-drag-handle' }, grip);
 
-  const closeBtn = h('button', {
-    class: 'sheet-close', 'aria-label': 'Close', onclick: closeSheet,
-  }, icon('close', 16));
-
   const panel = h('div', {
     class: 'sheet', role: 'dialog', 'aria-modal': 'true',
     onclick: (e) => e.stopPropagation(),
-  }, dragHandle, closeBtn);
+  }, dragHandle);
 
   const backdrop = h('div', { class: 'sheet-backdrop', onclick: closeSheet }, panel);
 

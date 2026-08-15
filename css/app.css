@@ -527,11 +527,28 @@ main {
 }
 
 .balance-tick {
+  position: relative;
   flex: 1 1 0;
-  border-right: 1.5px dashed rgba(255, 255, 255, 0.75);
 }
 
-.balance-tick:last-child { border-right: 0; }
+/* A drawn line rather than a dashed border — border-style:dashed at sub-pixel
+   widths renders inconsistently on iOS Safari and can vanish entirely on some
+   devices. A painted gradient shows up the same way everywhere. */
+.balance-tick::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  right: -1px;
+  width: 2px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.85) 0, rgba(255, 255, 255, 0.85) 5px,
+    transparent 5px, transparent 9px
+  );
+}
+
+.balance-tick:last-child::after { display: none; }
 
 .balance-legend {
   display: flex;
@@ -685,26 +702,41 @@ main {
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  touch-action: none;
   animation: fade 0.16s ease;
 }
 
 .sheet {
+  position: relative;
   width: 100%;
   max-width: var(--shell);
   max-height: 86dvh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--surface);
   border-radius: 20px 20px 0 0;
   padding: 10px var(--pad) calc(env(safe-area-inset-bottom) + 20px);
   animation: rise 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
 
+/* A generous invisible zone around the visible grip — the actual drag target
+   is much bigger than what's drawn, so it's easy to catch with a thumb. */
+.sheet-drag-handle {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 16px;
+  margin: -10px calc(var(--pad) * -1) 0;
+  touch-action: none;
+  cursor: grab;
+}
+
+.sheet-drag-handle:active { cursor: grabbing; }
+
 .sheet-grip {
   width: 38px;
   height: 4px;
   border-radius: 99px;
   background: var(--line-strong);
-  margin: 4px auto 14px;
 }
 
 .sheet h2 { font-size: 1.12rem; margin-bottom: 3px; }
