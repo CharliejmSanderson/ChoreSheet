@@ -37,11 +37,16 @@ export const COUNT_TOLERANCE = 1;
  *  as there's another equally-due candidate. Set to 0 to switch off. */
 export const REPEAT_PENALTY_WEEKS = 1;
 
-/** Ceiling on how many jobs one person can be given in a SINGLE week, as a
- *  multiple of a fair share. Stops someone returning from a week away being
- *  handed their whole backlog at once; catch-up spreads over a few weeks
- *  instead. Set very high (99) to switch off. */
-export const MAX_WEEKLY_SHARE = 1.3;
+/** How uneven a single week is allowed to be.
+ *
+ *  0 (the default) means everyone gets the same number of jobs, give or take
+ *  the remainder when it doesn't divide evenly — 10 jobs across 5 people is
+ *  2 each; 11 jobs is 3/2/2/2/2, and the extra goes to whoever has done the
+ *  fewest overall.
+ *
+ *  Raise it to 1 to let the week be a little lopsided in exchange for faster
+ *  catch-up after someone's been away. */
+export const WEEKLY_TOLERANCE = 0;
 
 /** Day keys, Monday-first. */
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -248,25 +253,27 @@ export function expandInstances(chores) {
  * Choose who gets one job.
  *
  * 1. Only people eligible for it (active, around, old enough).
- * 2. Drop anyone who's hit this week's ceiling — unless that leaves nobody, as
- *    a job is never left unassigned just to respect the cap.
+ * 2. Of those, only the ones carrying the fewest jobs SO FAR THIS WEEK. This
+ *    is what keeps the week evenly split — it's checked before anything else,
+ *    so no one can be handed a third job while someone else still has one.
  * 3. Keep everyone within COUNT_TOLERANCE of the lowest count FOR THIS CHORE.
- *    This is the main fairness rule.
+ *    Among people with the same weekly load, this decides *which* chore each
+ *    of them ends up with.
  * 4. Prefer people who haven't had this chore in the last week or so.
- * 5. Among those left, prefer whoever has the lowest total across all chores,
- *    so nobody quietly accumulates more jobs overall.
+ * 5. Prefer whoever has the lowest total across all chores. This is what sends
+ *    the odd remaining job to whoever's done the fewest overall.
  * 6. Pick at random from whoever's still standing.
  */
 function pickAssignee({
-  instance, members, counts, unavailable, history, weekId, rng,
-  weekLoad = {}, cap = Infinity,
+  instance, members, counts, unavailable, history, weekId, rng, weekLoad = {},
 }) {
   const chore = { adultOnly: instance.adultOnly };
   let pool = members.filter((m) => isEligible(m, chore, unavailable));
   if (pool.length === 0) return null;
 
-  const underCap = pool.filter((m) => (weekLoad[m.id] ?? 0) < cap);
-  if (underCap.length > 0) pool = underCap;
+  // 2 — even split first. Everything below only breaks ties within this group.
+  const lightest = Math.min(...pool.map((m) => weekLoad[m.id] ?? 0));
+  pool = pool.filter((m) => (weekLoad[m.id] ?? 0) <= lightest + WEEKLY_TOLERANCE);
 
   // 3 — lowest count of this specific chore
   const lowest = Math.min(...pool.map((m) => countFor(counts, m.id, instance.choreId)));
@@ -339,12 +346,8 @@ export function generateWeek({
   const instances = expandInstances(chores);
 
   // Counts as they stand before this week. Anyone who's been away naturally has
-  // lower counts, so they come up first until they've caught back up.
+  // lower counts, so they come up first when the odd job needs a home.
   const counts = computeCounts(history, members, { before: weekId });
-
-  const availableCount =
-    members.filter((m) => m.active && !unavailable.includes(m.id)).length || 1;
-  const cap = (instances.length / availableCount) * MAX_WEEKLY_SHARE;
 
   const weekLoad = {};
   for (const m of members) weekLoad[m.id] = 0;
@@ -367,17 +370,29 @@ export function generateWeek({
     }
   }
 
-  // Most-constrained jobs first: an adults-only chore needs placing while the
-  // adults still have room, or it can end up with nobody able to take it.
+  // Order matters. Two things go first because they have the least room to
+  // manoeuvre, and leaving them till last forces bad picks:
+  //   - jobs fewer people are allowed to do (adults-only)
+  //   - chores with fewer jobs to give out; a weekly chore has exactly one
+  //     chance to land fairly, whereas a daily chore has seven and can spread
+  //     itself around whatever's left
   // Random tie-break so the order isn't identical every week.
+  const instanceCount = new Map();
+  for (const inst of instances) {
+    instanceCount.set(inst.choreId, (instanceCount.get(inst.choreId) || 0) + 1);
+  }
+
   const eligibleCount = (instance) =>
     members.filter((m) => isEligible(m, { adultOnly: instance.adultOnly }, unavailable)).length;
 
-  toFill.sort((a, b) => (eligibleCount(a) - eligibleCount(b)) || (rng() - 0.5));
+  toFill.sort((a, b) =>
+    (eligibleCount(a) - eligibleCount(b))
+    || (instanceCount.get(a.choreId) - instanceCount.get(b.choreId))
+    || (rng() - 0.5));
 
   for (const instance of toFill) {
     const person = pickAssignee({
-      instance, members, counts, unavailable, history, weekId, rng, weekLoad, cap,
+      instance, members, counts, unavailable, history, weekId, rng, weekLoad,
     });
     if (person) tally(counts, weekLoad, person.id, instance.choreId);
     assigned.push({ ...instance, assignedTo: person ? person.id : null });

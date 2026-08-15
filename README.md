@@ -202,21 +202,22 @@ needs allocating, whoever has done that particular one least often comes first.
 Do that for every chore, every week, and each person ends up doing each job
 about the same number of times.
 
-It isn't strictly "lowest count always wins" — that would make the roster
-completely predictable. Anyone within one go of the lowest count is in the
-running, and the pick among them is random. Two more rules keep it sensible:
+**Every week is split as evenly as the numbers allow.** This is checked before
+anything else: 10 jobs across 5 people is 2 each, every time. When it doesn't
+divide evenly — say 11 jobs across 5 people — the split is 3/2/2/2/2, and the
+extra goes to whoever has done the fewest overall.
 
-- **Nobody gets the same chore two weeks running** if someone else is equally
-  due for it.
-- **Nobody gets buried in one week.** Someone back from a week away has a
-  backlog, but it's spread over a few weeks rather than dumped on them at once.
+Within that even split, the per-chore counts decide *which* chores each person
+gets. It isn't strictly "lowest count always wins", as that would make the
+roster completely predictable: anyone within one go of the lowest is in the
+running, and the pick among them is random.
 
-Where several people are equally due for a chore, the tie is broken by who has
-the lowest total across *all* chores, so nobody quietly accumulates more jobs
-overall.
+One more rule keeps it varied: **nobody gets the same chore two weeks running**
+if someone else is equally due for it.
 
-Marking someone **away** takes them out entirely for that week. They're not let
-off — they've simply done fewer, so they come up first once they're back.
+Marking someone **away** takes them out entirely for that week; the others
+split the load evenly between them. The person who was away has done fewer
+overall, so they're first in line for the odd extra job in the weeks after.
 
 **Editing a week doesn't break any of this.** The counts are always recalculated
 from what people actually ended up doing, so swaps and reassignments are
@@ -261,7 +262,7 @@ very top of the file, each with a comment explaining what it does:
 | `HISTORY_WEEKS` | 0 | How far back the counts look. 0 means all time, which is what makes the totals even out long-term. Set a number to make old history stop counting. |
 | `COUNT_TOLERANCE` | 1 | How close to the lowest count you have to be to still be in the running. 0 is strictest and most predictable; higher means more variety and slower evening-out. |
 | `REPEAT_PENALTY_WEEKS` | 1 | How long before someone can get the same chore again. Set to 0 to allow repeats. |
-| `MAX_WEEKLY_SHARE` | 1.3 | Ceiling on one person's load in a single week, as a multiple of a fair share. Raise it to let people catch up faster after being away. |
+| `WEEKLY_TOLERANCE` | 0 | How uneven a single week may be. 0 means everyone gets the same number of jobs bar the remainder. Set to 1 to allow a lopsided week in exchange for faster catch-up after someone's been away. |
 
 Nothing else in the file needs touching to change how the roster behaves.
 
