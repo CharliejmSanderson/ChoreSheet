@@ -10,12 +10,12 @@
    ========================================================================== */
 
 export const firebaseConfig = {
-  apiKey: 'PASTE_YOUR_API_KEY_HERE',
-  authDomain: 'PASTE_YOUR_AUTH_DOMAIN_HERE',
-  projectId: 'PASTE_YOUR_PROJECT_ID_HERE',
-  storageBucket: 'PASTE_YOUR_STORAGE_BUCKET_HERE',
-  messagingSenderId: 'PASTE_YOUR_SENDER_ID_HERE',
-  appId: 'PASTE_YOUR_APP_ID_HERE',
+  apiKey: "AIzaSyD3JCumXMnl51dwSVaRCvqv7n0z33-GjIA",
+  authDomain: "chore-sheet-b70d5.firebaseapp.com",
+  projectId: "chore-sheet-b70d5",
+  storageBucket: "chore-sheet-b70d5.firebasestorage.app",
+  messagingSenderId: "423085661594",
+  appId: "1:423085661594:web:b2f94f61b828e7898c2e23",
 };
 
 /** True once the placeholders above have actually been replaced. */
