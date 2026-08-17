@@ -22,6 +22,7 @@ import {
 } from './schedule.js';
 
 import { toggleChecklistItem as toggleItemLogic, moveItem, blockTypeMeta, localId as infoLocalId } from './info.js';
+import { APP_VERSION } from './config.js';
 import { downloadICS } from './ics.js';
 import { h, clear, icon, personDot, toast, confirmSheet } from './ui.js';
 
@@ -791,6 +792,7 @@ function render() {
    ------------------------------------------------------------------------ */
 
 async function boot() {
+  console.log(`Chores v${APP_VERSION}`);
   onChange(() => { if (suppressRender === 0) render(); });
   await initStore();
   render();

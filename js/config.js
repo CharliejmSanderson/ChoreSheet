@@ -28,3 +28,13 @@ export function isConfigured() {
 /* Which Firebase SDK version to load from the CDN. Bumping this is usually
    safe; check Firebase's release notes if something stops working. */
 export const FIREBASE_VERSION = '10.12.2';
+
+/**
+ * Bumped by 1 every time the app's code changes. Shown at the bottom of
+ * Manage so you can tell whether a given device has actually picked up the
+ * latest push yet — GitHub Pages and the installed Home Screen icon can
+ * both lag behind what's been deployed, sometimes by a few minutes,
+ * sometimes needing a manual refresh. If two devices show different
+ * numbers here, the lower one hasn't caught up yet.
+ */
+export const APP_VERSION = 1;

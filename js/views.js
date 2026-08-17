@@ -18,6 +18,7 @@ import {
   checkedItemsNow, isItemChecked, checklistProgress,
   groupBlocksByChore, orderedChoreIds,
 } from './info.js';
+import { APP_VERSION } from './config.js';
 
 const RESTRICTION_LABEL = { adultOnly: 'Adults only', childOnly: 'Kids only' };
 
@@ -897,6 +898,10 @@ export function manageView(ctx) {
   wrap.append(h('div', { class: 'row', style: { 'margin-top': '18px' } },
     h('button', { class: 'btn btn-ghost btn-sm', onclick: () => actions.openIdentity() },
       'Change who I am')));
+
+  wrap.append(h('p', {
+    class: 'small muted', style: { 'margin-top': '22px', 'text-align': 'center', opacity: '0.6' },
+  }, `v${APP_VERSION} · if this number looks lower than another device's, this one hasn't caught up yet`));
 
   return wrap;
 }
