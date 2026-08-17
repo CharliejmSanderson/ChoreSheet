@@ -147,13 +147,13 @@ function notGeneratedYet(ctx) {
 function choreRow(ctx, week, assignment) {
   const { members, actions, state } = ctx;
 
-  const restriction = restrictionOf(assignment);
+  // Who's eligible only matters when picking someone — showing "Adults only"
+  // on every glance at the week just adds noise to the main screen.
   const meta = h('div', { class: 'chore-meta' },
-    h('span', {}, assignment.type === 'daily' ? 'Different each day' : 'All week'),
-    restriction !== 'none' ? h('span', {}, `· ${RESTRICTION_LABEL[restriction]}`) : null);
+    h('span', {}, assignment.type === 'daily' ? 'Different each day' : 'All week'));
 
   const note = assignment.notes
-    ? h('div', { class: 'chore-note' }, h('span', { 'aria-hidden': 'true' }, '!'), assignment.notes)
+    ? h('div', { class: 'chore-note' }, assignment.notes)
     : null;
 
   if (assignment.type === 'weekly') {
@@ -409,8 +409,7 @@ export function manageView(ctx) {
             [chore.frequency === 'daily' ? 'Rotates daily' : 'One person all week',
              restriction !== 'none' ? RESTRICTION_LABEL[restriction].toLowerCase() : null,
              chore.active ? null : 'paused'].filter(Boolean).join(' · ')),
-          chore.notes ? h('div', { class: 'chore-note' },
-            h('span', { 'aria-hidden': 'true' }, '!'), chore.notes) : null),
+          chore.notes ? h('div', { class: 'chore-note' }, chore.notes) : null),
         h('button', { class: 'btn btn-quiet btn-sm', onclick: () => actions.openChore(chore) },
           'Edit')));
     }
@@ -442,8 +441,7 @@ export function reassignSheet({ week, assignment, day, members, current, onPick 
     h('p', { class: 'sheet-sub' },
       day ? `${DAY_LABELS[day]} · who's doing it?` : 'All week · who\'s doing it?'),
     assignment.notes
-      ? h('div', { class: 'chore-note', style: { 'margin-bottom': '14px' } },
-          h('span', { 'aria-hidden': 'true' }, '!'), assignment.notes)
+      ? h('div', { class: 'chore-note', style: { 'margin-bottom': '14px' } }, assignment.notes)
       : null,
     h('div', { class: 'pick-list' },
       members.map((member) => {

@@ -413,33 +413,18 @@ main {
 }
 
 /* A standing note on a chore — timings, instructions, anything worth repeating */
+/* A standing note on a chore — timings, instructions, anything worth
+   repeating. Deliberately styled to sit BELOW the chore name in the visual
+   hierarchy: no box, no background, no icon — just another line of text, the
+   same way the "All week" meta line reads. A loud, boxed note kept drawing
+   the eye before the chore name itself, which was the opposite of useful. */
 .chore-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin-top: 6px;
-  padding: 5px 9px;
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-line);
-  border-radius: 7px;
-  color: var(--warn-ink);
-  font-size: 0.78rem;
+  margin-top: 3px;
+  color: var(--ink-2);
+  font-size: 0.82rem;
+  font-style: italic;
   line-height: 1.35;
   text-align: left;
-}
-
-.chore-note > span:first-child {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  margin-top: 1px;
-  border-radius: 50%;
-  background: var(--warn-ink);
-  color: var(--warn-bg);
-  display: grid;
-  place-items: center;
-  font-size: 0.6rem;
-  font-weight: 700;
 }
 
 /* Blocks can't be inside a <button>, so daily chores use a div instead */
