@@ -113,9 +113,18 @@ service cloud.firestore {
     match /chores/{doc}        { allow read, write: if true; }
     match /weeks/{doc}         { allow read, write: if true; }
     match /activityLog/{doc}   { allow read, write: if true; }
+    match /infoBlocks/{doc}    { allow read, write: if true; }
+    match /appMeta/{doc}       { allow read, write: if true; }
   }
 }
 ```
+
+If you set these rules up before the Info tab existed, you'll need to update
+them — go back to **Firestore Database → Rules**, replace what's there with
+the block above, and **Publish** again. Without the last two lines, every
+write to Info blocks fails silently: the sheet closes as if it worked, but
+nothing was actually saved, because Firestore denies anything not explicitly
+listed by name here.
 
 Listing the four collections individually (rather than a blanket `match
 /{document=**}`) means a stray script can't create junk collections in your

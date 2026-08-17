@@ -107,6 +107,13 @@ function batched(fn) {
     suppressRender++;
     try {
       await fn(...args);
+    } catch (err) {
+      // A write that fails silently is worse than one that fails loudly —
+      // this is exactly how the missing Firestore rules for the Info tab
+      // went unnoticed: the sheet closed as if it worked, nothing was
+      // actually saved, and there was no signal anything had gone wrong.
+      console.error(err);
+      toast('Couldn\'t save that — check your connection and try again');
     } finally {
       suppressRender--;
       if (suppressRender === 0) render();
@@ -807,3 +814,9 @@ boot().catch((err) => {
 
 // Exposed for quick fiddling from the browser console; not used by the UI.
 window.chores = { state, data, actions };
+
+// Exported purely so tests can exercise the batching/error-handling logic
+// directly, without needing to fake a Firestore failure through the whole
+// app. Nothing in production imports from this file, so this has no effect
+// on the running app itself.
+export { batched };

@@ -247,12 +247,37 @@ export function openSheet(build) {
   openSheetNode = backdrop;
   lockBody();
   makeDraggable(panel, dragHandle, closeSheet);
+  keepFocusedFieldVisible(panel);
 
   // Move focus in so keyboard and screen-reader users land inside the sheet.
+  // No preventScroll here — that was the bug: suppressing the browser's own
+  // scroll-into-view is exactly what let the keyboard cover the field on the
+  // very first focus. A manual tap afterward worked fine because it never
+  // went through this code path at all.
   const focusable = panel.querySelector('input, button, select');
-  if (focusable) focusable.focus({ preventScroll: true });
+  if (focusable) focusable.focus();
 
   return closeSheet;
+}
+
+/**
+ * Keeps whichever field currently has focus visible above the on-screen
+ * keyboard — for every input in the sheet, not just the one focused when it
+ * opens. iOS doesn't reliably do this on its own inside a custom-scrolling
+ * container, which is why it can happen on any field, in any sheet, not just
+ * the first one. A short delay lets the keyboard's own animation start
+ * before scrolling, since scrolling immediately can land the field in the
+ * wrong place — the viewport hasn't finished resizing yet.
+ */
+function keepFocusedFieldVisible(panel) {
+  panel.addEventListener('focusin', (event) => {
+    const el = event.target;
+    if (!el.matches('input, textarea, select')) return;
+
+    setTimeout(() => {
+      if (document.body.contains(el)) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 300);
+  });
 }
 
 /** A yes/no sheet. Resolves true if confirmed. */
