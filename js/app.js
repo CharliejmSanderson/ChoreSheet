@@ -13,6 +13,7 @@ import {
   addMember, updateMember, removeMember,
   addChore, updateChore, removeChore,
   saveWeek, updateWeekAssignments, updateWeekFields, removeWeek, logActivity, resetLocal,
+  addInfoBlock, updateInfoBlock, removeInfoBlock, setInfoBoxOrder, reorderInfoBlocks,
 } from './store.js';
 
 import {
@@ -20,6 +21,7 @@ import {
   formatWeekRange, DAY_LABELS, unassignedCount, restrictionOf,
 } from './schedule.js';
 
+import { toggleChecklistItem as toggleItemLogic, moveItem, blockTypeMeta, localId as infoLocalId } from './info.js';
 import { downloadICS } from './ics.js';
 import { h, clear, icon, personDot, toast, confirmSheet } from './ui.js';
 
@@ -27,6 +29,8 @@ import {
   weekView, tasksView, activityView, manageView,
   reassignSheet, generateSheet, swapSheet, exportSheet,
   identitySheet, personSheet, choreSheet,
+  pickChoreForInfoSheet, pickBlockTypeSheet,
+  noteBlockSheet, checklistBlockSheet, stepsBlockSheet, supplyBlockSheet, commentsBlockSheet,
 } from './views.js';
 
 /* ---------------------------------------------------------------------------
@@ -37,6 +41,7 @@ const state = {
   tab: 'week',
   weekId: weekIdFor(),
   mineOnly: false,
+  tasksTab: 'info',
   // Set right after a redraw so the week view can offer one step back. Holds
   // a snapshot of the week as it was immediately before that redraw.
   undo: null,
@@ -54,6 +59,7 @@ const TABS = [
    ------------------------------------------------------------------------ */
 
 const nameOf = (id) => data.members.find((m) => m.id === id)?.name || 'Nobody';
+const nameOfChore = (id) => data.chores.find((c) => c.id === id)?.name || 'a chore';
 
 /** Deep copy the assignments before editing, so we never mutate cached state. */
 const cloneAssignments = (week) => JSON.parse(JSON.stringify(week.assignments || []));
@@ -64,6 +70,8 @@ function context() {
     chores: data.chores,
     weeks: data.weeks,
     log: data.log,
+    infoBlocks: data.infoBlocks,
+    infoBoxOrder: data.infoBoxOrder,
     who: getWho(),
     state,
     actions,
@@ -120,6 +128,11 @@ const actions = {
 
   setMineOnly(value) {
     state.mineOnly = value;
+    render();
+  },
+
+  setTasksTab(tab) {
+    state.tasksTab = tab;
     render();
   },
 
@@ -281,6 +294,7 @@ const actions = {
       assignment,
       day,
       members: data.members,
+      chores: data.chores,
       current,
       onPick: (memberId) => actions.reassign(weekId, assignment.choreId, day, memberId, current),
     });
@@ -507,6 +521,123 @@ const actions = {
     });
   },
 
+  /* --- Info (Tasks > Info) ----------------------------------------------
+     Two-step add flow: pick a chore (skipped if one's already known, e.g.
+     from a box's own "+"), then pick what kind of thing to add, then a
+     type-specific form. The actual write only happens once the form's own
+     Save is pressed — identity was already confirmed before any of this
+     opened, so nothing further down the chain needs to re-check it. */
+
+  openAddInfoBlock(choreId = null) {
+    if (choreId) {
+      pickBlockTypeSheet({ onPick: (type) => actions.openInfoBlockForm(choreId, type, null) });
+      return;
+    }
+    pickChoreForInfoSheet({
+      chores: data.chores,
+      onPick: (pickedChoreId) => pickBlockTypeSheet({
+        onPick: (type) => actions.openInfoBlockForm(pickedChoreId, type, null),
+      }),
+    });
+  },
+
+  openEditInfoBlock(block) {
+    actions.openInfoBlockForm(block.choreId, block.type, block);
+  },
+
+  openInfoBlockForm(choreId, type, block) {
+    const sheetFor = {
+      note: noteBlockSheet, checklist: checklistBlockSheet, steps: stepsBlockSheet,
+      supply: supplyBlockSheet, comments: commentsBlockSheet,
+    }[type];
+    if (!sheetFor) return;
+
+    sheetFor({
+      block,
+      onSave: batched(async (payload) => {
+        if (block) {
+          await updateInfoBlock(block.id, payload);
+          await logActivity({
+            action: 'Edited info',
+            context: `${nameOfChore(block.choreId)} · ${payload.label || blockTypeMeta(block.type)?.label}`,
+          });
+          toast('Saved');
+        } else {
+          const order = data.infoBlocks.filter((b) => b.choreId === choreId).length;
+          const base = {
+            choreId, type, order,
+            createdBy: whoName(), createdAt: new Date().toISOString(),
+            ...payload,
+          };
+          if (type === 'checklist') Object.assign(base, { checkedItems: [], checkedPeriodKey: '', checkedBy: {} });
+          if (type === 'comments') Object.assign(base, { entries: [] });
+
+          await addInfoBlock(base);
+          await logActivity({
+            action: 'Added info',
+            context: `${nameOfChore(choreId)} · ${blockTypeMeta(type)?.label}`,
+          });
+          toast('Added');
+        }
+      }),
+      onDelete: block ? async () => {
+        const ok = await confirmSheet({
+          title: 'Delete this?',
+          body: 'This removes it for everyone. If it\'s the only thing here, the whole box '
+            + 'disappears from the Info page too.',
+          confirmLabel: 'Delete',
+          danger: true,
+        });
+        if (!ok) return;
+
+        await batched(async () => {
+          await removeInfoBlock(block.id);
+          await logActivity({
+            action: 'Removed info',
+            context: `${nameOfChore(block.choreId)} · ${block.label || blockTypeMeta(block.type)?.label}`,
+          });
+          toast('Deleted');
+        })();
+      } : undefined,
+    });
+  },
+
+  /** Ticking, commenting, and adjusting supply are quick, frequent taps —
+   *  deliberately NOT written to the global Activity feed, or a checklist
+   *  used four times a day would drown out everything else there. Who did
+   *  what is still visible, just locally: a ticked item shows who ticked it,
+   *  a comment shows its author, right on the block itself. */
+
+  async toggleChecklistItem(block, itemId) {
+    const patch = toggleItemLogic(block, itemId, whoName());
+    await updateInfoBlock(block.id, patch);
+  },
+
+  async adjustSupply(block, delta) {
+    const quantity = Math.max(0, (block.quantity || 0) + delta);
+    await updateInfoBlock(block.id, { quantity });
+  },
+
+  async addComment(block, text) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const entry = { id: infoLocalId('c'), text: trimmed, author: whoName(), timestamp: new Date().toISOString() };
+    await updateInfoBlock(block.id, { entries: [...(block.entries || []), entry] });
+  },
+
+  /** Reordering also skips the activity log — it's tidying, not a change
+   *  anyone needs an audit trail for. */
+
+  async moveInfoBox(choreId, fromIndex, toIndex) {
+    if (toIndex < 0 || toIndex >= data.infoBoxOrder.length) return;
+    await setInfoBoxOrder(moveItem(data.infoBoxOrder, fromIndex, toIndex));
+  },
+
+  async moveInfoBlock(choreId, blocksInBox, fromIndex, toIndex) {
+    if (toIndex < 0 || toIndex >= blocksInBox.length) return;
+    await reorderInfoBlocks(moveItem(blocksInBox, fromIndex, toIndex).map((b) => b.id));
+  },
+
   async resetPreview() {
     const ok = await confirmSheet({
       title: 'Clear preview data?',
@@ -529,7 +660,10 @@ const actions = {
    first, then the batched write.
    ------------------------------------------------------------------------ */
 
-const BATCH_RENDER = ['reassign', 'swap', 'runGenerate', 'undoRedraw', 'fillRest'];
+const BATCH_RENDER = [
+  'reassign', 'swap', 'runGenerate', 'undoRedraw', 'fillRest',
+  'toggleChecklistItem', 'adjustSupply', 'addComment', 'moveInfoBox', 'moveInfoBlock',
+];
 
 for (const name of BATCH_RENDER) {
   actions[name] = batched(actions[name]);
@@ -552,6 +686,8 @@ for (const name of BATCH_RENDER) {
 const REQUIRES_IDENTITY = [
   'openReassign', 'openSwap', 'openGenerate', 'openRegenerate',
   'fillRest', 'undoRedraw', 'deleteWeek', 'openPerson', 'openChore',
+  'openAddInfoBlock', 'openEditInfoBlock',
+  'toggleChecklistItem', 'adjustSupply', 'addComment', 'moveInfoBox', 'moveInfoBlock',
 ];
 
 for (const name of REQUIRES_IDENTITY) {

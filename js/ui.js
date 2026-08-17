@@ -62,6 +62,15 @@ const PATHS = {
   wand: '<path d="M4 20L15 9M14 4l1 2.5L17.5 7 15 8l-1 2.5L13 8l-2.5-1L13 6zM19 13l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>',
   trash: '<path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/>',
   warn: '<path d="M12 3l9 16H3zM12 9v5M12 17v.5"/>',
+  up: '<path d="M5 15l7-7 7 7"/>',
+  down: '<path d="M5 9l7 7 7-7"/>',
+  edit: '<path d="M4 20h4L18.5 9.5a2.1 2.1 0 000-3L18 6a2.1 2.1 0 00-3 0L4.5 16.5V20z"/><path d="M13.5 7.5l3 3"/>',
+  check: '<path d="M5 13l4 4L19 7"/>',
+  note: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><path d="M8.5 12h7M8.5 15.5h7"/>',
+  checklist: '<path d="M4 6h2M4 12h2M4 18h2"/><path d="M9 6h11M9 12h11M9 18h11"/>',
+  steps: '<path d="M4 18h5v-4H4zM4 10h9V6H4z"/><path d="M15 8h5M15 16h5"/>',
+  comments: '<path d="M4 5h16v11H8l-4 4z"/>',
+  supply: '<path d="M6 3h12l1 4H5zM5 7h14v14H5z"/><path d="M9 11h6"/>',
 };
 
 export function icon(name, size = 20) {

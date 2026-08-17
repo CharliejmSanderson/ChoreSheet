@@ -7,14 +7,37 @@
    when you tap it".
    ========================================================================== */
 
-import { h, icon, personChip, personDot, tapeVar, timeAgo, openSheet, closeSheet } from './ui.js';
+import { h, clear, icon, personChip, personDot, tapeVar, timeAgo, openSheet, closeSheet } from './ui.js';
 import {
   DAYS, DAY_LABELS, HISTORY_WEEKS,
   formatWeekRange, datesOfWeek, weekIdFor, computeCounts, countFor,
   isEligible, restrictionOf, toISODate, unassignedCount, totalJobs,
 } from './schedule.js';
+import {
+  BLOCK_TYPES, RESET_CADENCES, blockTypeMeta, localId,
+  checkedItemsNow, isItemChecked, checklistProgress,
+  groupBlocksByChore, orderedChoreIds,
+} from './info.js';
 
 const RESTRICTION_LABEL = { adultOnly: 'Adults only', childOnly: 'Kids only' };
+
+/**
+ * A chore's note text, read LIVE from the current chore — not from the
+ * snapshot saved into the week when it was drawn up.
+ *
+ * This is deliberately different from weight and restriction, which DO stay
+ * frozen at generation time: those feed the fairness maths, so past weeks
+ * have to keep whatever was true when they were calculated, or the numbers
+ * would stop meaning anything. A note doesn't affect any calculation — it's
+ * just reference text — so there's no correctness reason to freeze it, and
+ * doing so only meant editing a note silently failed to update anything
+ * already on screen. Falls back to the frozen copy only if the chore itself
+ * has since been deleted, so old weeks don't just lose the note outright.
+ */
+function liveNote(chores, assignment) {
+  const chore = chores.find((c) => c.id === assignment.choreId);
+  return chore ? chore.notes : assignment.notes;
+}
 
 /* ---------------------------------------------------------------------------
    WEEK VIEW — the home screen
@@ -145,15 +168,16 @@ function notGeneratedYet(ctx) {
 /** One chore. Weekly chores are a single tappable row; daily chores show a
  *  seven-day strip where each day can be reassigned on its own. */
 function choreRow(ctx, week, assignment) {
-  const { members, actions, state } = ctx;
+  const { members, actions, state, chores } = ctx;
 
   // Who's eligible only matters when picking someone — showing "Adults only"
   // on every glance at the week just adds noise to the main screen.
   const meta = h('div', { class: 'chore-meta' },
     h('span', {}, assignment.type === 'daily' ? 'Different each day' : 'All week'));
 
-  const note = assignment.notes
-    ? h('div', { class: 'chore-note' }, assignment.notes)
+  const noteText = liveNote(chores, assignment);
+  const note = noteText
+    ? h('div', { class: 'chore-note' }, noteText)
     : null;
 
   if (assignment.type === 'weekly') {
@@ -213,7 +237,26 @@ function weekActions(ctx, week) {
    TASKS VIEW — who's done what, and how often
    ------------------------------------------------------------------------ */
 
+/** The Tasks tab: a switcher between Info (this chore's own notes and
+ *  checklists) and Data (the fairness tallies that already existed). Info is
+ *  the default — it's what people actually open this tab to check day to
+ *  day; Data is more of an occasional "is this still fair" glance. */
 export function tasksView(ctx) {
+  const { state, actions } = ctx;
+  const sub = state.tasksTab || 'info';
+
+  const wrap = h('div', {});
+  wrap.append(h('div', { class: 'seg-control', style: { 'margin-bottom': '16px' } },
+    h('button', { 'aria-pressed': String(sub === 'info'), onclick: () => actions.setTasksTab('info') },
+      'Info'),
+    h('button', { 'aria-pressed': String(sub === 'data'), onclick: () => actions.setTasksTab('data') },
+      'Data')));
+
+  wrap.append(sub === 'info' ? infoView(ctx) : dataView(ctx));
+  return wrap;
+}
+
+function dataView(ctx) {
   const { members, chores, weeks } = ctx;
   const active = members.filter((m) => m.active);
   const counts = computeCounts(weeks, members, { historyWeeks: HISTORY_WEEKS });
@@ -310,6 +353,437 @@ function nameFromHistory(weeks, choreId) {
     if (found?.choreName) return found.choreName;
   }
   return 'Removed chore';
+}
+
+/* ---------------------------------------------------------------------------
+   INFO VIEW — per-chore notes, checklists, steps, comments, supply levels
+   ------------------------------------------------------------------------ */
+
+function reorderButtons({ onUp, onDown, disableUp, disableDown, label }) {
+  return h('div', { class: 'reorder-btns' },
+    h('button', {
+      class: 'reorder-btn', disabled: disableUp,
+      'aria-label': `Move ${label} up`, onclick: onUp,
+    }, icon('up', 14)),
+    h('button', {
+      class: 'reorder-btn', disabled: disableDown,
+      'aria-label': `Move ${label} down`, onclick: onDown,
+    }, icon('down', 14)));
+}
+
+export function infoView(ctx) {
+  const { chores, infoBlocks, infoBoxOrder, actions } = ctx;
+  const grouped = groupBlocksByChore(infoBlocks);
+  const choreIds = orderedChoreIds(grouped, infoBoxOrder);
+
+  const wrap = h('div', {});
+
+  wrap.append(h('div', { class: 'row row-between', style: { 'margin-bottom': choreIds.length ? '14px' : '0' } },
+    h('div', {},
+      h('div', { class: 'eyebrow' }, 'Per-chore notes & checklists'),
+      h('h2', {}, 'Info')),
+    h('button', { class: 'btn btn-sm', onclick: () => actions.openAddInfoBlock() },
+      icon('plus', 15), 'Add')));
+
+  if (choreIds.length === 0) {
+    wrap.append(h('div', { class: 'card empty' },
+      h('h2', {}, 'Nothing here yet'),
+      h('p', {}, 'Add a note, a checklist, or anything else worth keeping with a chore.'),
+      h('button', { class: 'btn', onclick: () => actions.openAddInfoBlock() },
+        icon('plus', 16), 'Add info')));
+    return wrap;
+  }
+
+  choreIds.forEach((choreId, index) => {
+    const chore = chores.find((c) => c.id === choreId);
+    const choreName = chore?.name || nameFromChoreHistory(ctx, choreId);
+    const blocks = grouped.get(choreId) || [];
+
+    const box = h('div', { class: 'info-box' },
+      h('div', { class: 'info-box-head' },
+        reorderButtons({
+          label: choreName,
+          disableUp: index === 0,
+          disableDown: index === choreIds.length - 1,
+          onUp: () => actions.moveInfoBox(choreId, index, index - 1),
+          onDown: () => actions.moveInfoBox(choreId, index, index + 1),
+        }),
+        h('h3', { class: 'info-box-title' }, choreName),
+        h('button', {
+          class: 'info-add-btn', 'aria-label': `Add info to ${choreName}`,
+          onclick: () => actions.openAddInfoBlock(choreId),
+        }, icon('plus', 15))));
+
+    blocks.forEach((block, blockIndex) => {
+      box.append(infoBlockView(ctx, block, {
+        disableUp: blockIndex === 0,
+        disableDown: blockIndex === blocks.length - 1,
+        onUp: () => actions.moveInfoBlock(choreId, blocks, blockIndex, blockIndex - 1),
+        onDown: () => actions.moveInfoBlock(choreId, blocks, blockIndex, blockIndex + 1),
+      }));
+    });
+
+    wrap.append(box);
+  });
+
+  return wrap;
+}
+
+/** A deleted chore's name, recovered from wherever it's still referenced. */
+function nameFromChoreHistory(ctx, choreId) {
+  return nameFromHistory(ctx.weeks, choreId);
+}
+
+function blockHeader(block, { disableUp, disableDown, onUp, onDown, onEdit }) {
+  const meta = blockTypeMeta(block.type);
+  return h('div', { class: 'info-block-head' },
+    h('span', { class: 'info-block-type' }, icon(meta?.id === 'checklist' ? 'checklist'
+      : meta?.id === 'steps' ? 'steps' : meta?.id === 'comments' ? 'comments'
+      : meta?.id === 'supply' ? 'supply' : 'note', 15)),
+    h('span', { class: 'grow info-block-label' }, block.label || meta?.label || ''),
+    reorderButtons({ label: block.label || meta?.label || 'block', disableUp, disableDown, onUp, onDown }),
+    h('button', { class: 'reorder-btn', 'aria-label': 'Edit', onclick: onEdit }, icon('edit', 14)));
+}
+
+function infoBlockView(ctx, block, reorder) {
+  const { actions } = ctx;
+  const onEdit = () => actions.openEditInfoBlock(block);
+
+  if (block.type === 'note') {
+    return h('div', { class: 'info-block' },
+      blockHeader(block, { ...reorder, onEdit }),
+      h('p', { class: 'info-block-text' }, block.text || ''));
+  }
+
+  if (block.type === 'steps') {
+    const list = h('ol', { class: 'info-steps' });
+    for (const step of block.steps || []) list.append(h('li', {}, step.text));
+    return h('div', { class: 'info-block' }, blockHeader(block, { ...reorder, onEdit }), list);
+  }
+
+  if (block.type === 'checklist') {
+    const { done, total } = checklistProgress(block);
+    const list = h('div', { class: 'checklist' });
+    for (const item of block.items || []) {
+      const checked = isItemChecked(block, item.id);
+      const by = checked ? block.checkedBy?.[item.id] : null;
+      list.append(h('button', {
+        class: `checklist-item${checked ? ' is-checked' : ''}`,
+        onclick: () => actions.toggleChecklistItem(block, item.id),
+      },
+        h('span', { class: 'check-box', 'aria-hidden': 'true' }, checked ? icon('check', 13) : ''),
+        h('span', { class: 'grow' }, item.text),
+        by ? h('span', { class: 'small muted' }, by) : null));
+    }
+    return h('div', { class: 'info-block' },
+      blockHeader(block, { ...reorder, onEdit }),
+      h('div', { class: 'small muted', style: { margin: '2px 0 8px' } },
+        `${done}/${total} done · resets ${block.resetCadence === 'never' ? 'never' : block.resetCadence}`),
+      list);
+  }
+
+  if (block.type === 'supply') {
+    return h('div', { class: 'info-block' },
+      blockHeader(block, { ...reorder, onEdit }),
+      h('div', { class: 'supply-row' },
+        h('button', {
+          class: 'supply-btn', 'aria-label': 'Decrease', disabled: block.quantity <= 0,
+          onclick: () => actions.adjustSupply(block, -1),
+        }, '–'),
+        h('span', { class: 'supply-value' }, `${block.quantity} ${block.unit || ''}`.trim()),
+        h('button', {
+          class: 'supply-btn', 'aria-label': 'Increase',
+          onclick: () => actions.adjustSupply(block, 1),
+        }, '+')));
+  }
+
+  if (block.type === 'comments') {
+    const list = h('div', { class: 'comment-list' });
+    for (const entry of block.entries || []) {
+      list.append(h('div', { class: 'comment-entry' },
+        h('div', { class: 'row row-between' },
+          h('span', { class: 'small', style: { 'font-weight': '650' } }, entry.author),
+          h('span', { class: 'small muted' }, timeAgo(entry.timestamp))),
+        h('p', { class: 'info-block-text', style: { margin: '2px 0 0' } }, entry.text)));
+    }
+
+    const input = h('input', { class: 'input', type: 'text', placeholder: 'Add a comment…', maxlength: '300' });
+    const send = () => {
+      const text = input.value.trim();
+      if (!text) return;
+      actions.addComment(block, text);
+      input.value = '';
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+
+    return h('div', { class: 'info-block' },
+      blockHeader(block, { ...reorder, onEdit }),
+      list.childNodes.length ? list : h('p', { class: 'small muted' }, 'No comments yet.'),
+      h('div', { class: 'row', style: { 'margin-top': '8px', gap: '8px' } },
+        input, h('button', { class: 'btn btn-sm', onclick: send }, 'Post')));
+  }
+
+  return h('div', { class: 'info-block' }, blockHeader(block, { ...reorder, onEdit }));
+}
+
+/* ---------------------------------------------------------------------------
+   INFO SHEETS
+   ------------------------------------------------------------------------ */
+
+/** Step 1: which chore is this info for? */
+export function pickChoreForInfoSheet({ chores, onPick }) {
+  return openSheet((close) => [
+    h('h2', {}, 'Add info to which chore?'),
+    h('p', { class: 'sheet-sub' }, 'Pick a chore — you can add more than one thing to it later.'),
+    h('div', { class: 'pick-list' },
+      chores.length
+        ? [...chores].sort((a, b) => a.name.localeCompare(b.name)).map((chore) =>
+            h('button', { class: 'pick', onclick: () => { close(); onPick(chore.id); } },
+              h('span', { class: 'grow' }, chore.name)))
+        : h('p', { class: 'small muted' }, 'Add a chore under Manage first.')),
+  ]);
+}
+
+/** Step 2: what kind of thing? */
+export function pickBlockTypeSheet({ onPick }) {
+  return openSheet((close) => [
+    h('h2', {}, 'What kind of info?'),
+    h('div', { class: 'pick-list' },
+      BLOCK_TYPES.map((type) =>
+        h('button', { class: 'pick', style: { 'align-items': 'flex-start' }, onclick: () => { close(); onPick(type.id); } },
+          icon(type.id === 'checklist' ? 'checklist' : type.id === 'steps' ? 'steps'
+            : type.id === 'comments' ? 'comments' : type.id === 'supply' ? 'supply' : 'note', 18),
+          h('span', { class: 'grow' },
+            h('div', { style: { 'font-weight': '650' } }, type.label),
+            h('div', { class: 'small muted' }, type.description))))),
+  ]);
+}
+
+/** Create or edit a note block. */
+export function noteBlockSheet({ block, onSave, onDelete }) {
+  const draft = { label: block?.label || '', text: block?.text || '' };
+
+  return openSheet((close) => {
+    const labelInput = h('input', {
+      class: 'input', type: 'text', value: draft.label, maxlength: '60',
+      placeholder: 'e.g. Where the filters are kept',
+      oninput: (e) => { draft.label = e.target.value; },
+    });
+    const textInput = h('textarea', { class: 'input', rows: '5', maxlength: '2000', oninput: (e) => { draft.text = e.target.value; } });
+    textInput.value = draft.text;
+
+    return [
+      h('h2', {}, block ? 'Edit note' : 'Add a note'),
+      h('div', { class: 'stack', style: { 'margin-top': '14px' } },
+        h('div', { class: 'field' }, h('label', {}, 'Title (optional)'), labelInput),
+        h('div', { class: 'field' }, h('label', {}, 'Note'), textInput),
+        h('button', {
+          class: 'btn btn-block',
+          onclick: () => { close(); onSave({ ...draft, label: draft.label.trim(), text: draft.text.trim() }); },
+        }, 'Save'),
+        block ? deleteBlockButton(close, onDelete) : null),
+    ];
+  });
+}
+
+/** Create or edit a checklist block. */
+export function checklistBlockSheet({ block, onSave, onDelete }) {
+  const draft = {
+    label: block?.label || '',
+    resetCadence: block?.resetCadence || 'daily',
+    items: block?.items ? block.items.map((i) => ({ ...i })) : [],
+  };
+
+  return openSheet((close) => {
+    const labelInput = h('input', {
+      class: 'input', type: 'text', value: draft.label, maxlength: '60',
+      placeholder: 'e.g. Feeding times',
+      oninput: (e) => { draft.label = e.target.value; },
+    });
+
+    const cadenceBtns = {};
+    const cadenceRow = h('div', { class: 'seg-control' });
+    for (const c of RESET_CADENCES) {
+      const btn = h('button', { 'aria-pressed': String(draft.resetCadence === c.id) }, c.label);
+      btn.addEventListener('click', () => {
+        draft.resetCadence = c.id;
+        for (const [id, b] of Object.entries(cadenceBtns)) b.setAttribute('aria-pressed', String(id === c.id));
+      });
+      cadenceBtns[c.id] = btn;
+      cadenceRow.append(btn);
+    }
+
+    const itemsList = h('div', { class: 'stack', style: { gap: '7px' } });
+    const renderItems = () => {
+      clear(itemsList);
+      draft.items.forEach((item, index) => {
+        const itemInput = h('input', {
+          class: 'input', type: 'text', value: item.text, maxlength: '40', placeholder: `Item ${index + 1}`,
+          oninput: (e) => { item.text = e.target.value; },
+        });
+        itemsList.append(h('div', { class: 'row', style: { gap: '8px' } },
+          itemInput,
+          h('button', {
+            class: 'btn btn-quiet btn-sm', 'aria-label': 'Remove item',
+            onclick: () => { draft.items.splice(index, 1); renderItems(); },
+          }, icon('trash', 15))));
+      });
+    };
+    renderItems();
+
+    return [
+      h('h2', {}, block ? 'Edit checklist' : 'Add a checklist'),
+      h('div', { class: 'stack', style: { 'margin-top': '14px' } },
+        h('div', { class: 'field' }, h('label', {}, 'Title'), labelInput),
+        h('div', { class: 'field' }, h('label', {}, 'Resets'), cadenceRow),
+        h('div', { class: 'field' },
+          h('label', {}, 'Items'),
+          itemsList,
+          h('button', {
+            class: 'btn btn-ghost btn-sm', style: { 'align-self': 'flex-start', 'margin-top': '4px' },
+            onclick: () => { draft.items.push({ id: localId('item'), text: '' }); renderItems(); },
+          }, icon('plus', 14), 'Add item')),
+        h('button', {
+          class: 'btn btn-block',
+          onclick: () => {
+            const items = draft.items.map((i) => ({ ...i, text: i.text.trim() })).filter((i) => i.text);
+            if (!draft.label.trim() || items.length === 0) return;
+            close();
+            onSave({ label: draft.label.trim(), resetCadence: draft.resetCadence, items });
+          },
+        }, 'Save'),
+        block ? deleteBlockButton(close, onDelete) : null),
+    ];
+  });
+}
+
+/** Create or edit a steps block. */
+export function stepsBlockSheet({ block, onSave, onDelete }) {
+  const draft = {
+    label: block?.label || '',
+    steps: block?.steps ? block.steps.map((s) => ({ ...s })) : [],
+  };
+
+  return openSheet((close) => {
+    const labelInput = h('input', {
+      class: 'input', type: 'text', value: draft.label, maxlength: '60',
+      placeholder: 'e.g. Cleaning the filter',
+      oninput: (e) => { draft.label = e.target.value; },
+    });
+
+    const stepsList = h('div', { class: 'stack', style: { gap: '7px' } });
+    const renderSteps = () => {
+      clear(stepsList);
+      draft.steps.forEach((step, index) => {
+        const stepInput = h('input', {
+          class: 'input', type: 'text', value: step.text, maxlength: '120', placeholder: `Step ${index + 1}`,
+          oninput: (e) => { step.text = e.target.value; },
+        });
+        stepsList.append(h('div', { class: 'row', style: { gap: '8px' } },
+          h('span', { class: 'small muted', style: { flex: 'none', width: '18px' } }, String(index + 1)),
+          stepInput,
+          h('button', {
+            class: 'btn btn-quiet btn-sm', 'aria-label': 'Remove step',
+            onclick: () => { draft.steps.splice(index, 1); renderSteps(); },
+          }, icon('trash', 15))));
+      });
+    };
+    renderSteps();
+
+    return [
+      h('h2', {}, block ? 'Edit steps' : 'Add steps'),
+      h('div', { class: 'stack', style: { 'margin-top': '14px' } },
+        h('div', { class: 'field' }, h('label', {}, 'Title'), labelInput),
+        h('div', { class: 'field' },
+          h('label', {}, 'Steps, in order'),
+          stepsList,
+          h('button', {
+            class: 'btn btn-ghost btn-sm', style: { 'align-self': 'flex-start', 'margin-top': '4px' },
+            onclick: () => { draft.steps.push({ id: localId('step'), text: '' }); renderSteps(); },
+          }, icon('plus', 14), 'Add step')),
+        h('button', {
+          class: 'btn btn-block',
+          onclick: () => {
+            const steps = draft.steps.map((s) => ({ ...s, text: s.text.trim() })).filter((s) => s.text);
+            if (!draft.label.trim() || steps.length === 0) return;
+            close();
+            onSave({ label: draft.label.trim(), steps });
+          },
+        }, 'Save'),
+        block ? deleteBlockButton(close, onDelete) : null),
+    ];
+  });
+}
+
+/** Create or edit a supply counter. */
+export function supplyBlockSheet({ block, onSave, onDelete }) {
+  const draft = {
+    label: block?.label || '',
+    unit: block?.unit || '',
+    quantity: block?.quantity ?? 0,
+  };
+
+  return openSheet((close) => {
+    const labelInput = h('input', {
+      class: 'input', type: 'text', value: draft.label, maxlength: '60',
+      placeholder: 'e.g. Cat food', oninput: (e) => { draft.label = e.target.value; },
+    });
+    const unitInput = h('input', {
+      class: 'input', type: 'text', value: draft.unit, maxlength: '20',
+      placeholder: 'e.g. days, bags, scoops', oninput: (e) => { draft.unit = e.target.value; },
+    });
+    const qtyInput = h('input', {
+      class: 'input', type: 'number', value: String(draft.quantity), min: '0',
+      oninput: (e) => { draft.quantity = Number(e.target.value) || 0; },
+    });
+
+    return [
+      h('h2', {}, block ? 'Edit supply level' : 'Add a supply level'),
+      h('div', { class: 'stack', style: { 'margin-top': '14px' } },
+        h('div', { class: 'field' }, h('label', {}, 'Title'), labelInput),
+        h('div', { class: 'field' }, h('label', {}, 'Starting amount'), qtyInput),
+        h('div', { class: 'field' }, h('label', {}, 'Unit (optional)'), unitInput),
+        h('button', {
+          class: 'btn btn-block',
+          onclick: () => {
+            if (!draft.label.trim()) return;
+            close();
+            onSave({ label: draft.label.trim(), unit: draft.unit.trim(), quantity: draft.quantity });
+          },
+        }, 'Save'),
+        block ? deleteBlockButton(close, onDelete) : null),
+    ];
+  });
+}
+
+/** Comments only need a title — entries are added afterward, on the block. */
+export function commentsBlockSheet({ block, onSave, onDelete }) {
+  const draft = { label: block?.label || 'Comments' };
+
+  return openSheet((close) => {
+    const labelInput = h('input', {
+      class: 'input', type: 'text', value: draft.label, maxlength: '60',
+      oninput: (e) => { draft.label = e.target.value; },
+    });
+
+    return [
+      h('h2', {}, block ? 'Edit thread' : 'Add a comment thread'),
+      h('div', { class: 'stack', style: { 'margin-top': '14px' } },
+        h('div', { class: 'field' }, h('label', {}, 'Title'), labelInput),
+        h('button', {
+          class: 'btn btn-block',
+          onclick: () => { close(); onSave({ label: draft.label.trim() || 'Comments' }); },
+        }, 'Save'),
+        block ? deleteBlockButton(close, onDelete) : null),
+    ];
+  });
+}
+
+function deleteBlockButton(close, onDelete) {
+  return h('button', {
+    class: 'btn btn-quiet btn-block btn-danger',
+    onclick: () => { close(); onDelete(); },
+  }, icon('trash', 16), 'Delete this');
 }
 
 /* ---------------------------------------------------------------------------
@@ -432,16 +906,17 @@ export function manageView(ctx) {
    ------------------------------------------------------------------------ */
 
 /** Pick a person for a chore, or for one day of one. */
-export function reassignSheet({ week, assignment, day, members, current, onPick }) {
+export function reassignSheet({ week, assignment, day, members, chores, current, onPick }) {
   const restriction = restrictionOf(assignment);
   const chore = { restriction };
+  const noteText = liveNote(chores, assignment);
 
   return openSheet(() => [
     h('h2', {}, assignment.choreName),
     h('p', { class: 'sheet-sub' },
       day ? `${DAY_LABELS[day]} · who's doing it?` : 'All week · who\'s doing it?'),
-    assignment.notes
-      ? h('div', { class: 'chore-note', style: { 'margin-bottom': '14px' } }, assignment.notes)
+    noteText
+      ? h('div', { class: 'chore-note', style: { 'margin-bottom': '14px' } }, noteText)
       : null,
     h('div', { class: 'pick-list' },
       members.map((member) => {

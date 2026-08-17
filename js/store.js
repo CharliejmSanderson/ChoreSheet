@@ -10,6 +10,8 @@
      chores         the chore library (name, note, weekly/daily)
      weeks          one document per generated week, keyed by its Monday
      activityLog    an append-only record of every change anyone makes
+     infoBlocks     Tasks > Info content: notes, checklists, steps, etc.
+     appMeta        small standalone values — currently just infoBoxOrder
    ========================================================================== */
 
 import { firebaseConfig, isConfigured, FIREBASE_VERSION } from './config.js';
@@ -27,6 +29,8 @@ export const data = {
   chores: [],
   weeks: [],
   log: [],
+  infoBlocks: [],
+  infoBoxOrder: [], // chore IDs, in the order their Info boxes should appear
 };
 
 let fb = null;               // holds the Firestore functions once loaded
@@ -83,6 +87,7 @@ function writeLocal() {
   try {
     localStorage.setItem(LOCAL_KEY, JSON.stringify({
       members: data.members, chores: data.chores, weeks: data.weeks, log: data.log,
+      infoBlocks: data.infoBlocks, infoBoxOrder: data.infoBoxOrder,
     }));
   } catch { /* storage full or blocked; the session still works in memory */ }
 }
@@ -118,7 +123,9 @@ export async function initStore() {
     watch('familyMembers', 'members');
     watch('chores', 'chores');
     watch('weeks', 'weeks');
+    watch('infoBlocks', 'infoBlocks');
     watchLog();
+    watchInfoBoxOrder();
     return mode;
   } catch (err) {
     console.error('Could not reach Firebase, staying in local preview.', err);
@@ -150,6 +157,15 @@ function watchLog() {
   }, (err) => console.error('Lost the activity log connection.', err));
 }
 
+/** infoBoxOrder is one small value, not a collection of many documents, so it
+ *  gets its own single-document watcher rather than going through watch(). */
+function watchInfoBoxOrder() {
+  fb.onSnapshot(fb.doc(db, 'appMeta', 'infoBoxOrder'), (snap) => {
+    data.infoBoxOrder = snap.exists() ? (snap.data().order || []) : [];
+    notify();
+  }, (err) => console.error('Lost the info box order connection.', err));
+}
+
 /** A first-run example family so the app isn't a blank wall. Easy to delete. */
 function seedStarterData() {
   data.members = [
@@ -163,6 +179,8 @@ function seedStarterData() {
   ];
   data.weeks = [];
   data.log = [];
+  data.infoBlocks = [];
+  data.infoBoxOrder = [];
   writeLocal();
 }
 
@@ -301,4 +319,50 @@ export function resetLocal() {
   try { localStorage.removeItem(LOCAL_KEY); } catch {}
   seedStarterData();
   notify();
+}
+
+/* ---------------------------------------------------------------------------
+   INFO BLOCKS (Tasks > Info)
+
+   A "box" — a chore with at least one block — isn't its own record; it's
+   just whatever chore IDs currently have blocks. Adding a chore's first
+   block appends it to infoBoxOrder; removing its last block drops it back
+   out, matching "stays on the page once it has something in it."
+   ------------------------------------------------------------------------ */
+
+export async function addInfoBlock(payload) {
+  const id = await create('infoBlocks', 'infoBlocks', payload);
+  if (!data.infoBoxOrder.includes(payload.choreId)) {
+    await setInfoBoxOrder([...data.infoBoxOrder, payload.choreId]);
+  }
+  return id;
+}
+
+export const updateInfoBlock = (id, patch) => update('infoBlocks', 'infoBlocks', id, patch);
+
+export async function removeInfoBlock(id) {
+  const block = data.infoBlocks.find((b) => b.id === id);
+  await remove('infoBlocks', 'infoBlocks', id);
+
+  // If that was the chore's last block, its box disappears from the order too.
+  const stillHasBlocks = data.infoBlocks.some((b) => b.choreId === block?.choreId && b.id !== id);
+  if (block && !stillHasBlocks && data.infoBoxOrder.includes(block.choreId)) {
+    await setInfoBoxOrder(data.infoBoxOrder.filter((cid) => cid !== block.choreId));
+  }
+}
+
+export async function setInfoBoxOrder(order) {
+  if (mode === 'cloud') {
+    await fb.setDoc(fb.doc(db, 'appMeta', 'infoBoxOrder'), { order });
+    return;
+  }
+  data.infoBoxOrder = order;
+  writeLocal();
+  notify();
+}
+
+/** Renumber a set of blocks to a new order in one go — used when reordering
+ *  the blocks within a single chore's box. */
+export async function reorderInfoBlocks(orderedIds) {
+  await Promise.all(orderedIds.map((id, index) => updateInfoBlock(id, { order: index })));
 }

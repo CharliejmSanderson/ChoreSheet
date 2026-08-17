@@ -883,6 +883,207 @@ main {
   text-align: right;
 }
 
+/* ---------------------------------------------------------------------------
+   INFO TAB — per-chore notes, checklists, steps, comments, supply levels
+   ------------------------------------------------------------------------ */
+
+.info-box {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.info-box-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px var(--pad);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-sunk);
+}
+
+.info-box-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.98rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.info-add-btn {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+/* Up/down move buttons — deliberately plain tap targets rather than a drag
+   gesture. Drag-to-reorder is notoriously easy to get wrong on touch (the
+   sheet's own grip handle needed a real fix for exactly this), and reordering
+   here is an occasional tidy-up, not a several-times-a-day action, so the
+   reliability trade-off is worth it. */
+.reorder-btns {
+  display: flex;
+  flex: none;
+  gap: 3px;
+}
+
+.reorder-btn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.reorder-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+
+.info-block {
+  padding: 12px var(--pad);
+  border-bottom: 1px solid var(--line);
+}
+
+.info-block:last-child { border-bottom: 0; }
+
+.info-block-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.info-block-type {
+  flex: none;
+  color: var(--ink-3);
+  display: grid;
+  place-items: center;
+}
+
+.info-block-label {
+  font-weight: 650;
+  font-size: 0.92rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.info-block-text {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.info-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+/* Checklist ---------------------------------------------------------------- */
+
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-sunk);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 11px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.checklist-item.is-checked {
+  background: color-mix(in srgb, var(--tape-3) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--tape-3) 35%, transparent);
+  color: var(--ink-2);
+}
+
+.checklist-item .check-box {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  border-radius: 6px;
+  border: 1.5px solid var(--line-strong);
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+
+.checklist-item.is-checked .check-box {
+  background: var(--tape-3);
+  border-color: var(--tape-3);
+}
+
+/* Supply level --------------------------------------------------------------- */
+
+.supply-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.supply-btn {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-sunk);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.supply-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.supply-value {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  min-width: 70px;
+  text-align: center;
+}
+
+/* Comments ------------------------------------------------------------------ */
+
+.comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.comment-entry {
+  padding: 8px 10px;
+  background: var(--surface-sunk);
+  border-radius: 8px;
+}
+
 /* Wider screens: the app stays a phone-shaped column, which is what it is. */
 @media (min-width: 700px) {
   main { padding-bottom: var(--pad); }
