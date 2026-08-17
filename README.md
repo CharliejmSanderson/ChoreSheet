@@ -386,6 +386,25 @@ adults-only and so can only go to some people.
 
 ---
 
+## Celebrating a finished chore
+
+The **Celebrate** button on the week screen is purely for fun — pick whatever
+you just finished from the list and get a burst of confetti. Nothing is saved
+or marked complete; it's a moment, not a record, so it doesn't ask who you
+are first.
+
+---
+
+## Checking you're on the latest version
+
+The bottom of **Manage** shows a version number like `v1.1.0`. Every code
+change bumps it, so if one device shows a lower number than another, that
+device hasn't picked up the latest push yet — see "If something goes wrong"
+below for the usual fix (it's almost always the installed Home Screen icon
+holding onto a cached copy).
+
+---
+
 ## A note on what this doesn't do
 
 It won't text or email anyone, and it won't send notifications. Anything that

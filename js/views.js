@@ -7,7 +7,7 @@
    when you tap it".
    ========================================================================== */
 
-import { h, clear, icon, personChip, personDot, tapeVar, timeAgo, openSheet, closeSheet } from './ui.js';
+import { h, clear, icon, personChip, personDot, tapeVar, timeAgo, fireConfetti, openSheet, closeSheet } from './ui.js';
 import {
   DAYS, DAY_LABELS, HISTORY_WEEKS,
   formatWeekRange, datesOfWeek, weekIdFor, computeCounts, countFor,
@@ -222,6 +222,8 @@ function choreRow(ctx, week, assignment) {
 function weekActions(ctx, week) {
   const { actions } = ctx;
   return h('div', { class: 'row wrap', style: { 'margin-top': '14px', gap: '8px' } },
+    h('button', { class: 'btn btn-sm', onclick: () => actions.openCelebrate(week.id) },
+      icon('sparkle', 16), 'Celebrate'),
     h('button', { class: 'btn btn-ghost btn-sm', onclick: () => actions.openSwap(week.id) },
       icon('swap', 16), 'Swap chores'),
     h('button', { class: 'btn btn-ghost btn-sm', onclick: () => actions.openExport(week.id) },
@@ -1064,6 +1066,23 @@ export function swapSheet({ week, members, onSwap }) {
 
   const refresh = () => openSheet((close) => render(close));
   return refresh();
+}
+
+/** Pick a chore to celebrate. Purely for fun — no data is written, nothing
+ *  is marked done, it's just a moment of "nice work" with some confetti. */
+export function celebrateSheet({ week, onPick }) {
+  const names = [...new Set((week.assignments || []).map((a) => a.choreName))].sort();
+
+  return openSheet((close) => [
+    h('h2', {}, 'What did you finish?'),
+    h('p', { class: 'sheet-sub' }, 'Pick it and get a little celebration.'),
+    h('div', { class: 'pick-list' },
+      names.length
+        ? names.map((name) =>
+            h('button', { class: 'pick', onclick: () => { close(); onPick(name); } },
+              h('span', { class: 'grow' }, name)))
+        : h('p', { class: 'small muted' }, 'Nothing in this week yet.')),
+  ]);
 }
 
 /** Calendar export: everyone, or one person. */

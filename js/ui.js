@@ -71,6 +71,7 @@ const PATHS = {
   steps: '<path d="M4 18h5v-4H4zM4 10h9V6H4z"/><path d="M15 8h5M15 16h5"/>',
   comments: '<path d="M4 5h16v11H8l-4 4z"/>',
   supply: '<path d="M6 3h12l1 4H5zM5 7h14v14H5z"/><path d="M9 11h6"/>',
+  sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><path d="M6.5 6.5l2 2M15.5 15.5l2 2M17.5 6.5l-2 2M8.5 15.5l-2 2"/>',
 };
 
 export function icon(name, size = 20) {
@@ -335,6 +336,47 @@ export function toast(message) {
 /* ---------------------------------------------------------------------------
    FORMATTING
    ------------------------------------------------------------------------ */
+
+/* ---------------------------------------------------------------------------
+   CONFETTI
+
+   A short, purely decorative celebration burst. No state, nothing persisted
+   — it fires, plays for a couple of seconds, and cleans itself up.
+   ------------------------------------------------------------------------ */
+
+const CONFETTI_COLORS = [
+  'var(--tape-0)', 'var(--tape-1)', 'var(--tape-2)', 'var(--tape-3)',
+  'var(--tape-4)', 'var(--tape-5)', 'var(--tape-6)', 'var(--tape-7)',
+];
+
+export function fireConfetti() {
+  const layer = h('div', { class: 'confetti-layer', 'aria-hidden': 'true' });
+  const pieceCount = 70;
+  let longestRun = 0;
+
+  for (let i = 0; i < pieceCount; i++) {
+    const duration = 1.7 + Math.random() * 1.3;
+    const delay = Math.random() * 0.35;
+    longestRun = Math.max(longestRun, duration + delay);
+
+    layer.append(h('div', {
+      class: 'confetti-piece',
+      style: {
+        left: `${Math.random() * 100}%`,
+        background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+        'border-radius': Math.random() < 0.5 ? '2px' : '50%',
+        '--drift': `${(Math.random() - 0.5) * 220}px`,
+        '--spin': `${(2 + Math.random() * 3) * 360 * (Math.random() < 0.5 ? -1 : 1)}deg`,
+        '--fall': `${(typeof window !== 'undefined' ? window.innerHeight : 800) + 40}px`,
+        'animation-duration': `${duration}s`,
+        'animation-delay': `${delay}s`,
+      },
+    }));
+  }
+
+  document.body.append(layer);
+  setTimeout(() => layer.remove(), (longestRun + 0.3) * 1000);
+}
 
 /** "just now" / "3h ago" / "12 Aug" */
 export function timeAgo(iso) {

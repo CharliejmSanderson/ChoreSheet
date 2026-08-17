@@ -24,11 +24,11 @@ import {
 import { toggleChecklistItem as toggleItemLogic, moveItem, blockTypeMeta, localId as infoLocalId } from './info.js';
 import { APP_VERSION } from './config.js';
 import { downloadICS } from './ics.js';
-import { h, clear, icon, personDot, toast, confirmSheet } from './ui.js';
+import { h, clear, icon, personDot, toast, confirmSheet, fireConfetti } from './ui.js';
 
 import {
   weekView, tasksView, activityView, manageView,
-  reassignSheet, generateSheet, swapSheet, exportSheet,
+  reassignSheet, generateSheet, swapSheet, exportSheet, celebrateSheet,
   identitySheet, personSheet, choreSheet,
   pickChoreForInfoSheet, pickBlockTypeSheet,
   noteBlockSheet, checklistBlockSheet, stepsBlockSheet, supplyBlockSheet, commentsBlockSheet,
@@ -384,6 +384,23 @@ const actions = {
   },
 
   /* --- Calendar --------------------------------------------------------- */
+
+  /* --- Celebrate ---------------------------------------------------------
+     Purely for fun — no write, no attribution, nothing to guard behind
+     identity. Just pick what got done and enjoy the confetti. */
+
+  openCelebrate(weekId) {
+    const week = data.weeks.find((w) => w.id === weekId);
+    if (!week) return;
+
+    celebrateSheet({
+      week,
+      onPick: (name) => {
+        fireConfetti();
+        toast(`Nice work on ${name}! 🎉`);
+      },
+    });
+  },
 
   openExport(weekId) {
     const week = data.weeks.find((w) => w.id === weekId);
