@@ -14,6 +14,8 @@ import {
   addChore, updateChore, removeChore,
   saveWeek, updateWeekAssignments, updateWeekFields, removeWeek, logActivity, resetLocal,
   addInfoBlock, updateInfoBlock, removeInfoBlock, setInfoBoxOrder, reorderInfoBlocks,
+  createHousehold, resolveInviteCode, joinHousehold, verifyOwnerPassword,
+  rotateInviteCode, changeOwnerPassword, leaveHousehold, migrateLegacyToHousehold,
 } from './store.js';
 
 import {
@@ -22,6 +24,7 @@ import {
 } from './schedule.js';
 
 import { toggleChecklistItem as toggleItemLogic, moveItem, blockTypeMeta, localId as infoLocalId } from './info.js';
+import { buildJoinLink } from './household.js';
 import { APP_VERSION } from './config.js';
 import { downloadICS } from './ics.js';
 import { h, clear, icon, personDot, toast, confirmSheet, fireConfetti } from './ui.js';
@@ -32,6 +35,8 @@ import {
   identitySheet, personSheet, choreSheet,
   pickChoreForInfoSheet, pickBlockTypeSheet,
   noteBlockSheet, checklistBlockSheet, stepsBlockSheet, supplyBlockSheet, commentsBlockSheet,
+  removeMemberSheet, ownerRecoverSheet, changeOwnerPasswordSheet,
+  gateChoiceView, gateCreateView, gateJoinView, gateMigrateView, gateLinkConfirmView,
 } from './views.js';
 
 /* ---------------------------------------------------------------------------
@@ -46,6 +51,15 @@ const state = {
   // Set right after a redraw so the week view can offer one step back. Holds
   // a snapshot of the week as it was immediately before that redraw.
   undo: null,
+};
+
+/** State for the pre-app household gate — separate from the main app's
+ *  state, since it's shown instead of the app, not alongside it. */
+const gateState = {
+  screen: 'choice', // 'choice' | 'create' | 'join' | 'migrate' | 'link-confirm'
+  linkCode: null,   // pre-filled if this device arrived via a shared join link
+  error: '',
+  busy: false,
 };
 
 const TABS = [
@@ -73,6 +87,8 @@ function context() {
     log: data.log,
     infoBlocks: data.infoBlocks,
     infoBoxOrder: data.infoBoxOrder,
+    household: data.household,
+    isOwner: data.isOwner,
     who: getWho(),
     state,
     actions,
@@ -419,8 +435,11 @@ const actions = {
   /* --- People ----------------------------------------------------------- */
 
   openPerson(member) {
+    const canDelete = !data.household || data.isOwner;
+
     personSheet({
       member,
+      canDelete,
       onSave: batched(async (draft) => {
         if (member) {
           const changes = [];
@@ -444,7 +463,7 @@ const actions = {
           toast(`${draft.name.trim()} added`);
         }
       }),
-      onDelete: async () => {
+      onDelete: !canDelete ? undefined : async () => {
         // The confirm dialog can sit open indefinitely — only the actual
         // write afterward should suppress renders, not the waiting.
         const ok = await confirmSheet({
@@ -663,6 +682,152 @@ const actions = {
     await reorderInfoBlocks(moveItem(blocksInBox, fromIndex, toIndex).map((b) => b.id));
   },
 
+  /* --- Household (Manage tab) --------------------------------------------
+     Copying is non-destructive and needs no guard. The owner-only actions
+     below are gated by the UI only showing them when data.isOwner is true —
+     the password itself is what actually proves ownership. */
+
+  async copyInviteCode() {
+    try {
+      await navigator.clipboard.writeText(data.household.inviteCode);
+      toast('Code copied');
+    } catch {
+      toast(`Code: ${data.household.inviteCode}`);
+    }
+  },
+
+  async copyJoinLink() {
+    const link = buildJoinLink(data.household.inviteCode);
+    try {
+      await navigator.clipboard.writeText(link);
+      toast('Invite link copied');
+    } catch {
+      toast('Couldn\'t copy — try again');
+    }
+  },
+
+  openRemoveMember() {
+    removeMemberSheet({
+      members: data.members,
+      // Routes into the existing edit sheet, which already has the (now
+      // owner-gated) delete button — one place that actually does the
+      // deleting, rather than duplicating that logic here too.
+      onPick: (member) => actions.openPerson(member),
+    });
+  },
+
+  openOwnerRecover() {
+    ownerRecoverSheet({
+      onSubmit: (password) => verifyOwnerPassword(password),
+    });
+  },
+
+  openRotateCode() {
+    confirmSheet({
+      title: 'Generate a new invite code?',
+      body: 'The current code stops working immediately. Anyone who hasn\'t joined yet will need the new one.',
+      confirmLabel: 'Generate new code',
+    }).then(async (ok) => {
+      if (!ok) return;
+      await batched(async () => {
+        await rotateInviteCode();
+        toast('New invite code generated');
+      })();
+    });
+  },
+
+  openChangeOwnerPassword() {
+    changeOwnerPasswordSheet({
+      onSubmit: batched(async (newPassword) => {
+        await changeOwnerPassword(newPassword);
+        toast('Owner password changed');
+      }),
+    });
+  },
+
+  openLeaveHousehold() {
+    confirmSheet({
+      title: 'Leave this household?',
+      body: 'This device forgets everything and asks you to create or join again. Nothing changes for '
+        + 'anyone else — their devices keep working exactly as they were.',
+      confirmLabel: 'Leave',
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return;
+      leaveHousehold();
+      // A full reload is the simplest way to guarantee a completely clean
+      // slate — the app has a fair amount of accumulated state by boot time,
+      // and re-running boot() from scratch avoids any of it lingering stale.
+      window.location.reload();
+    });
+  },
+
+  /* --- Household gate ----------------------------------------------------
+     Navigation and the three ways a device can end up in a household. These
+     render through renderGate(), not the main render() — the gate replaces
+     the whole app until it resolves. */
+
+  gateGoTo(screen) {
+    gateState.screen = screen;
+    gateState.error = '';
+    renderGate();
+  },
+
+  async gateCreate(password) {
+    gateState.error = ''; gateState.busy = true; renderGate();
+    try {
+      await createHousehold(password);
+      cleanUrlJoinParam();
+      finishBoot();
+    } catch (err) {
+      console.error(err);
+      gateState.busy = false;
+      gateState.error = 'Couldn\'t create the household — check your connection and try again.';
+      renderGate();
+    }
+  },
+
+  async gateJoin(rawCode) {
+    gateState.error = ''; gateState.busy = true; gateState.linkCode = rawCode; renderGate();
+    try {
+      const householdId = await resolveInviteCode(rawCode);
+      if (!householdId) {
+        gateState.busy = false;
+        gateState.error = 'That code doesn\'t match a household. Double check it and try again.';
+        renderGate();
+        return;
+      }
+      const ok = await joinHousehold(householdId);
+      if (!ok) {
+        gateState.busy = false;
+        gateState.error = 'Something went wrong joining. Try again.';
+        renderGate();
+        return;
+      }
+      cleanUrlJoinParam();
+      finishBoot();
+    } catch (err) {
+      console.error(err);
+      gateState.busy = false;
+      gateState.error = 'Couldn\'t join — check your connection and try again.';
+      renderGate();
+    }
+  },
+
+  async gateMigrate(password) {
+    gateState.error = ''; gateState.busy = true; renderGate();
+    try {
+      await migrateLegacyToHousehold(password);
+      cleanUrlJoinParam();
+      finishBoot();
+    } catch (err) {
+      console.error(err);
+      gateState.busy = false;
+      gateState.error = 'Couldn\'t set that up — check your connection and try again.';
+      renderGate();
+    }
+  },
+
   async resetPreview() {
     const ok = await confirmSheet({
       title: 'Clear preview data?',
@@ -808,10 +973,59 @@ function render() {
    BOOT
    ------------------------------------------------------------------------ */
 
-async function boot() {
-  console.log(`Chores v${APP_VERSION}`);
-  onChange(() => { if (suppressRender === 0) render(); });
-  await initStore();
+/** Reads a ?join=CODE parameter from the URL, if this device arrived via a
+ *  shared invite link rather than typing a code by hand. */
+function detectJoinLinkCode() {
+  try {
+    return new URLSearchParams(window.location.search).get('join');
+  } catch {
+    return null;
+  }
+}
+
+/** Removes the join parameter from the address bar once it's been used, so
+ *  refreshing the page doesn't re-trigger the same prompt. */
+function cleanUrlJoinParam() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('join');
+    window.history.replaceState({}, '', url.toString());
+  } catch { /* not worth failing over */ }
+}
+
+/** The full-screen takeover shown until this device knows which household
+ *  it belongs to. Replaces buildShell()'s normal app entirely — there's no
+ *  topbar or tab bar here, nothing to navigate to yet. */
+function renderGate() {
+  clear(app);
+  const props = {
+    hasLegacyData: data.hasLegacyData,
+    busy: gateState.busy,
+    error: gateState.error,
+    actions,
+  };
+
+  let node;
+  if (gateState.screen === 'link-confirm') {
+    node = gateLinkConfirmView({ ...props, code: gateState.linkCode });
+  } else if (gateState.screen === 'create') {
+    node = gateCreateView(props);
+  } else if (gateState.screen === 'join') {
+    node = gateJoinView({ ...props, prefillCode: gateState.linkCode });
+  } else if (gateState.screen === 'migrate') {
+    node = gateMigrateView(props);
+  } else {
+    node = gateChoiceView(props);
+  }
+
+  app.append(node);
+}
+
+/** Builds the normal app shell and shows it — called once a household is
+ *  resolved, whether that took zero steps (local preview, or a device that
+ *  already had one saved) or a few (just created, joined, or migrated). */
+function finishBoot() {
+  topbarEl = null; // force buildShell() to run fresh if we're arriving from the gate
   render();
 
   // First run: if nobody's said who they are and there are people to choose
@@ -819,6 +1033,23 @@ async function boot() {
   if (!getWho() && data.members.length > 1) {
     setTimeout(() => actions.openIdentity(true), 400);
   }
+}
+
+async function boot() {
+  console.log(`Chores v${APP_VERSION}`);
+  onChange(() => { if (suppressRender === 0) render(); });
+
+  gateState.linkCode = detectJoinLinkCode();
+
+  const status = await initStore();
+
+  if (status === 'needs-household') {
+    gateState.screen = gateState.linkCode ? 'link-confirm' : 'choice';
+    renderGate();
+    return;
+  }
+
+  finishBoot();
 }
 
 boot().catch((err) => {
