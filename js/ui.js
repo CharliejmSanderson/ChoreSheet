@@ -72,6 +72,9 @@ const PATHS = {
   comments: '<path d="M4 5h16v11H8l-4 4z"/>',
   supply: '<path d="M6 3h12l1 4H5zM5 7h14v14H5z"/><path d="M9 11h6"/>',
   sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><path d="M6.5 6.5l2 2M15.5 15.5l2 2M17.5 6.5l-2 2M8.5 15.5l-2 2"/>',
+  link: '<path d="M9 15l6-6"/><path d="M8 6.5L10 4.5a4 4 0 015.5 5.5l-1.5 2M16 17.5L14 19.5a4 4 0 01-5.5-5.5l1.5-2"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2"/>',
+  home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/>',
 };
 
 export function icon(name, size = 20) {
