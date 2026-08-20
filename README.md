@@ -105,30 +105,54 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // This app has no login, so there's no user identity to check against.
-    // Anyone who has the web address can read and change the chore list.
-    // See "About security" in the README before using this for anything
-    // more sensitive than chores.
+    // Anyone who knows a household's ID can read and change everything in
+    // it — the household ID (and, separately, the invite code) is what
+    // stands in for a login. See "About security" below.
 
+    // === Legacy — pre-household data (only relevant if you're updating
+    // from before multi-household support existed) ===
+    // Kept in place so a one-time migration can still read it and copy it
+    // into a real household. Safe to leave here indefinitely afterward —
+    // once migrated, these are simply unused.
     match /familyMembers/{doc} { allow read, write: if true; }
     match /chores/{doc}        { allow read, write: if true; }
     match /weeks/{doc}         { allow read, write: if true; }
     match /activityLog/{doc}   { allow read, write: if true; }
     match /infoBlocks/{doc}    { allow read, write: if true; }
     match /appMeta/{doc}       { allow read, write: if true; }
+
+    // === Households ===
+    // Anyone who knows a household's ID can read and write everything
+    // inside it (same trust model as before, just scoped per household
+    // instead of one shared space). "list" is denied on the household
+    // document itself, so households can't be browsed or discovered
+    // without already knowing their ID — only a direct, specific "get".
+    match /households/{householdId} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if true;
+
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // === Invite codes ===
+    // A short code maps to a household ID. Fetching ONE code you already
+    // have ("get") is allowed; browsing every code that exists ("list")
+    // is denied, so codes can't be discovered by guessing or scanning.
+    match /inviteCodes/{code} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if true;
+    }
   }
 }
 ```
 
-If you set these rules up before the Info tab existed, you'll need to update
-them — go back to **Firestore Database → Rules**, replace what's there with
-the block above, and **Publish** again. Without the last two lines, every
-write to Info blocks fails silently: the sheet closes as if it worked, but
-nothing was actually saved, because Firestore denies anything not explicitly
-listed by name here.
-
-Listing the four collections individually (rather than a blanket `match
-/{document=**}`) means a stray script can't create junk collections in your
-database. It's a small thing, but it costs nothing.
+If you're updating from a version before multi-household support, this is a
+**full replacement** of your existing rules, not an addition — paste over
+everything that's there.
 
 ---
 
@@ -306,27 +330,73 @@ Nothing else in the file needs touching to change how the roster behaves.
 
 ---
 
+## Households — sharing this with other families
+
+The app now supports separate households that don't see each other's data —
+useful if you're sharing this deployment with friends rather than just your
+own family.
+
+**The first time anyone opens the app**, they're asked to create a new
+household, join one with a code, or (only shown if the app finds pre-household
+data left over from before this feature existed) set up an existing family as
+a household.
+
+**Creating one** asks for an owner password. This isn't for everyday use —
+regular family members never see or need it — it's specifically for managing
+the household later: removing someone, generating a new invite code, or
+recovering owner access on a different device. There's no email or SMS reset
+if it's forgotten; the last resort is editing it directly in the Firebase
+console, the same as any other manual fix this app has always relied on for
+things outside the UI's reach.
+
+**Joining one** just needs the invite code, visible to everyone in **Manage →
+Household** once you're in. There's also a **Copy invite link** button there —
+sharing that link lets someone join in one tap instead of typing the code by
+hand.
+
+**Owner-only settings**, shown only on the device recognized as owner:
+generating a new invite code (the old one stops working immediately) and
+removing a member outright. Anyone can still *pause* a member without being
+the owner — that's not destructive, so it isn't gated. On a device that isn't
+currently recognized as owner, an **"I'm the owner"** link asks for the
+password and restores owner status there too.
+
+**Leaving a household** is available to anyone, from Manage — the device
+forgets everything and is asked to create or join again. Nothing about the
+household changes for anyone else when you do this.
+
+---
+
 ## About security
 
-**Anyone with the web address can read and change everything.** There's no login,
-and the "who are you?" name is chosen, not verified — someone could pick another
-family member's name and act as them.
+**Anyone who knows a household's ID can read and change everything in it.**
+There's still no login, and the "who are you?" name is chosen, not verified —
+someone could pick another family member's name and act as them. The owner
+password is a genuine improvement on top of that baseline — it stops someone
+from casually promoting themselves to owner through the UI — but it doesn't
+change the underlying trust model: this was never meant to resist a
+determined, technical adversary, only to keep an honest household honest.
 
-This is a deliberate trade-off, not an oversight. Adding real accounts would mean
-passwords to reset and a login screen between your family and the chore list,
-for a tool whose worst-case outcome is an argument about the bins. The
+This is a deliberate trade-off, not an oversight. Adding real accounts would
+mean passwords to reset and a login screen between your family and the chore
+list, for a tool whose worst-case outcome is an argument about the bins. The
 **Activity** tab is the safeguard instead: every change is recorded with a name
 and a timestamp, and it can't be edited from inside the app.
 
 What this does mean:
 
-- The GitHub Pages address is public. It's unlikely anyone will find it, but
-  it isn't secret — treat it as discoverable.
+- The GitHub Pages address is public, and so is the ability to *create* a new
+  household from it. Anyone with the link could create their own (empty,
+  separate) household — they still can't see or touch anyone else's.
+- Removing someone from a household removes their profile, not their device's
+  access — if they already know the household's ID, there's no per-device
+  revocation without real authentication. Rotating the invite code stops new
+  people joining; it doesn't retroactively cut off someone already in.
 - Don't put anything private in chore names.
 - The Firebase keys in `config.js` are meant to be public (that's normal for web
   apps) — the database rules are what control access, not the keys.
 
-If you later want to lock it down, the two paths are [Firebase
+If you later want to lock it down further, the two paths are [Firebase
 Authentication](https://firebase.google.com/docs/auth) for real logins, or
 [Firebase App Check](https://firebase.google.com/docs/app-check) to at least
 restrict access to your own site. Both work on the free tier.
