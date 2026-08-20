@@ -832,9 +832,130 @@ export function activityView(ctx) {
    MANAGE VIEW
    ------------------------------------------------------------------------ */
 
+/* ---------------------------------------------------------------------------
+   HOUSEHOLD — invite code, share link, and owner-only administration.
+   Absent entirely in local preview mode (no Firebase, nothing to share).
+   ------------------------------------------------------------------------ */
+
+function householdSection(ctx) {
+  const { household, isOwner, actions } = ctx;
+  if (!household) return null;
+
+  const wrap = h('div', {});
+
+  wrap.append(h('div', { class: 'section-head' },
+    h('div', {}, h('div', { class: 'eyebrow' }, 'This device is in'), h('h2', {}, 'Household'))));
+
+  wrap.append(h('div', { class: 'card' },
+    h('div', { class: 'row row-between', style: { 'align-items': 'center' } },
+      h('div', {},
+        h('div', { class: 'small muted' }, 'Invite code — anyone can see this'),
+        h('div', { style: { 'font-family': 'var(--font-mono)', 'font-size': '1.35rem', 'letter-spacing': '0.07em', 'font-weight': '700' } },
+          household.inviteCode)),
+      h('button', { class: 'btn btn-ghost btn-sm', onclick: () => actions.copyInviteCode() }, 'Copy')),
+    h('button', {
+      class: 'btn btn-ghost btn-block btn-sm', style: { 'margin-top': '10px' },
+      onclick: () => actions.copyJoinLink(),
+    }, icon('link', 15), 'Copy invite link')));
+
+  if (!isOwner) {
+    wrap.append(h('button', {
+      class: 'btn btn-quiet btn-sm', style: { 'margin-top': '4px' },
+      onclick: () => actions.openOwnerRecover(),
+    }, icon('key', 14), "I'm the owner"));
+  }
+
+  if (isOwner) {
+    wrap.append(h('div', { class: 'section-head' },
+      h('div', {}, h('div', { class: 'eyebrow' }, 'Only shown on the owner\'s device'), h('h2', {}, 'Owner settings'))));
+
+    wrap.append(h('div', { class: 'card' },
+      h('div', { class: 'stack' },
+        h('button', { class: 'btn btn-ghost btn-sm', onclick: () => actions.openRemoveMember() },
+          'Remove a member'),
+        h('button', { class: 'btn btn-ghost btn-sm', onclick: () => actions.openRotateCode() },
+          'Generate a new invite code'),
+        h('p', { class: 'small muted', style: { margin: '0' } },
+          'The current code stops working the moment you do this.'),
+        h('button', { class: 'btn btn-ghost btn-sm', style: { 'margin-top': '6px' }, onclick: () => actions.openChangeOwnerPassword() },
+          'Change owner password'))));
+  }
+
+  wrap.append(h('button', {
+    class: 'btn btn-quiet btn-sm btn-danger', style: { 'margin-top': '14px' },
+    onclick: () => actions.openLeaveHousehold(),
+  }, 'Leave this household'));
+
+  return wrap;
+}
+
+/** Owner-only: pick a family member to remove entirely (not just pause). */
+export function removeMemberSheet({ members, onPick }) {
+  return openSheet((close) => [
+    h('h2', {}, 'Remove someone'),
+    h('p', { class: 'sheet-sub' }, 'This deletes their profile from the family. Past weeks keep their name in history.'),
+    h('div', { class: 'pick-list' },
+      members.map((member) =>
+        h('button', { class: 'pick', onclick: () => { close(); onPick(member); } },
+          h('span', { class: 'grow' }, member.name)))),
+  ]);
+}
+
+/** Enter the owner password to reclaim owner status on this device. */
+export function ownerRecoverSheet({ onSubmit }) {
+  return openSheet((close) => {
+    const input = h('input', { class: 'input', type: 'password', placeholder: 'Owner password', autocomplete: 'current-password' });
+    const error = h('p', { class: 'small', style: { color: '#a11d2e', margin: '6px 0 0', display: 'none' } }, 'That password isn\'t right.');
+
+    const submit = async () => {
+      const ok = await onSubmit(input.value);
+      if (ok) close();
+      else error.style.display = 'block';
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+
+    return [
+      h('h2', {}, "I'm the owner"),
+      h('p', { class: 'sheet-sub' }, 'Enter the owner password to manage this household from this device.'),
+      h('div', { class: 'field' }, h('label', {}, 'Password'), input),
+      error,
+      h('button', { class: 'btn btn-block', style: { 'margin-top': '14px' }, onclick: submit }, 'Confirm'),
+    ];
+  });
+}
+
+/** Owner-only: set a new owner password. */
+export function changeOwnerPasswordSheet({ onSubmit }) {
+  return openSheet((close) => {
+    const pw1 = h('input', { class: 'input', type: 'password', placeholder: 'New password', autocomplete: 'new-password' });
+    const pw2 = h('input', { class: 'input', type: 'password', placeholder: 'Confirm new password', autocomplete: 'new-password' });
+    const error = h('p', { class: 'small', style: { color: '#a11d2e', margin: '6px 0 0', display: 'none' } });
+
+    const submit = () => {
+      if (pw1.value.length < 4) { error.textContent = 'Use at least 4 characters.'; error.style.display = 'block'; return; }
+      if (pw1.value !== pw2.value) { error.textContent = 'Those don\'t match.'; error.style.display = 'block'; return; }
+      close();
+      onSubmit(pw1.value);
+    };
+
+    return [
+      h('h2', {}, 'Change owner password'),
+      h('p', { class: 'sheet-sub' }, 'Anyone who knows this can manage the household, including from a new device.'),
+      h('div', { class: 'stack' },
+        h('div', { class: 'field' }, h('label', {}, 'New password'), pw1),
+        h('div', { class: 'field' }, h('label', {}, 'Confirm'), pw2)),
+      error,
+      h('button', { class: 'btn btn-block', style: { 'margin-top': '14px' }, onclick: submit }, 'Save'),
+    ];
+  });
+}
+
 export function manageView(ctx) {
   const { members, chores, actions } = ctx;
   const wrap = h('div', {});
+
+  const household = householdSection(ctx);
+  if (household) wrap.append(household);
 
   wrap.append(h('div', { class: 'section-head' },
     h('div', {},
@@ -1124,7 +1245,7 @@ export function identitySheet({ members, current, onPick, dismissible = true }) 
 }
 
 /** Add or edit a person. */
-export function personSheet({ member, onSave, onDelete }) {
+export function personSheet({ member, canDelete = true, onSave, onDelete }) {
   const editing = !!member;
   const draft = {
     name: member?.name || '',
@@ -1166,11 +1287,15 @@ export function personSheet({ member, onSave, onDelete }) {
             close(); onSave(draft);
           },
         }, editing ? 'Save changes' : 'Add to the family'),
-        editing
+        editing && canDelete
           ? h('button', {
               class: 'btn btn-quiet btn-block btn-danger',
               onclick: () => { close(); onDelete(); },
             }, icon('trash', 16), 'Remove from the family')
+          : null,
+        editing && !canDelete
+          ? h('p', { class: 'small muted', style: { 'text-align': 'center', margin: '4px 0 0' } },
+              'Only the household owner can remove someone. Pausing is available to everyone.')
           : null),
     ];
   });
@@ -1277,4 +1402,168 @@ export function choreSheet({ chore, onSave, onDelete }) {
           : null),
     ];
   });
+}
+
+/* ---------------------------------------------------------------------------
+   HOUSEHOLD GATE — shown before anything else, once per device, until it
+   knows which household it belongs to. Local preview mode never reaches
+   this; only cloud mode with no saved household does.
+   ------------------------------------------------------------------------ */
+
+function gateShell(...children) {
+  return h('div', { class: 'gate' },
+    h('div', { class: 'gate-card' },
+      h('div', { class: 'gate-brand' },
+        icon('home', 26), h('span', {}, 'Chores')),
+      ...children));
+}
+
+function gateError(message) {
+  return message ? h('p', { class: 'gate-error' }, message) : null;
+}
+
+/** The very first thing a fresh device sees. */
+export function gateChoiceView({ hasLegacyData, error, actions }) {
+  return gateShell(
+    h('h1', {}, 'Welcome'),
+    h('p', { class: 'gate-sub' }, 'Is this a new household, or are you joining one someone else set up?'),
+    gateError(error),
+    h('div', { class: 'stack', style: { 'margin-top': '18px' } },
+      h('button', { class: 'btn btn-block', onclick: () => actions.gateGoTo('create') },
+        'Create a new household'),
+      h('button', { class: 'btn btn-ghost btn-block', onclick: () => actions.gateGoTo('join') },
+        'Join with a code'),
+      hasLegacyData
+        ? h('button', { class: 'btn btn-quiet btn-block', onclick: () => actions.gateGoTo('migrate') },
+            'Set up my existing family')
+        : null));
+}
+
+/** Create a brand-new, empty household. */
+export function gateCreateView({ busy, error, actions }) {
+  let password = '';
+  let confirm = '';
+
+  const pw1 = h('input', { class: 'input', type: 'password', placeholder: 'Choose an owner password', autocomplete: 'new-password',
+    oninput: (e) => { password = e.target.value; } });
+  const pw2 = h('input', { class: 'input', type: 'password', placeholder: 'Confirm it', autocomplete: 'new-password',
+    oninput: (e) => { confirm = e.target.value; } });
+
+  // Checked instantly, in place — this never triggers a full re-render, so a
+  // typo in the confirmation shows an error WITHOUT wiping what was typed.
+  // Only a real network attempt (via actions.gateCreate) re-renders the page.
+  const localError = h('p', { class: 'gate-error', style: { display: 'none' } });
+  const showLocalError = (msg) => { localError.textContent = msg; localError.style.display = 'block'; };
+
+  const submit = () => {
+    if (!password || password.length < 4) { showLocalError('Use at least 4 characters.'); return; }
+    if (password !== confirm) { showLocalError('Those don\'t match.'); return; }
+    localError.style.display = 'none';
+    actions.gateCreate(password);
+  };
+
+  return gateShell(
+    h('button', { class: 'gate-back', onclick: () => actions.gateGoTo('choice') }, icon('left', 15), 'Back'),
+    h('h1', {}, 'Create a household'),
+    h('p', { class: 'gate-sub' },
+      'This password lets you manage the household — remove people, change the invite code — '
+      + 'from any device later. There\'s no email reset if it\'s lost, so keep it somewhere safe.'),
+    gateError(error),
+    localError,
+    h('div', { class: 'stack', style: { 'margin-top': '14px' } },
+      h('div', { class: 'field' }, h('label', {}, 'Owner password'), pw1),
+      h('div', { class: 'field' }, h('label', {}, 'Confirm'), pw2),
+      h('button', {
+        class: 'btn btn-block', disabled: busy,
+        onclick: submit,
+      }, busy ? 'Creating…' : 'Create household')));
+}
+
+/** Join an existing household with a short code. */
+export function gateJoinView({ prefillCode, busy, error, actions }) {
+  let code = prefillCode || '';
+
+  const input = h('input', {
+    class: 'input', type: 'text', maxlength: '6', placeholder: 'e.g. K7XPQ2',
+    value: code, style: { 'text-transform': 'uppercase', 'letter-spacing': '0.08em', 'font-family': 'var(--font-mono)' },
+    oninput: (e) => { code = e.target.value; },
+  });
+
+  const localError = h('p', { class: 'gate-error', style: { display: 'none' } });
+
+  const submit = () => {
+    if (!code || code.trim().length < 4) {
+      localError.textContent = 'Enter the invite code.';
+      localError.style.display = 'block';
+      return;
+    }
+    localError.style.display = 'none';
+    actions.gateJoin(code);
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+
+  return gateShell(
+    h('button', { class: 'gate-back', onclick: () => actions.gateGoTo('choice') }, icon('left', 15), 'Back'),
+    h('h1', {}, 'Join a household'),
+    h('p', { class: 'gate-sub' }, 'Ask whoever set it up for the invite code — it\'s visible to everyone once you\'re in.'),
+    gateError(error),
+    localError,
+    h('div', { class: 'stack', style: { 'margin-top': '14px' } },
+      h('div', { class: 'field' }, h('label', {}, 'Invite code'), input),
+      h('button', {
+        class: 'btn btn-block', disabled: busy,
+        onclick: submit,
+      }, busy ? 'Joining…' : 'Join')));
+}
+
+/** One-time: turn existing pre-household data into a real household. */
+export function gateMigrateView({ busy, error, actions }) {
+  let password = '';
+  let confirm = '';
+
+  const pw1 = h('input', { class: 'input', type: 'password', placeholder: 'Choose an owner password', autocomplete: 'new-password',
+    oninput: (e) => { password = e.target.value; } });
+  const pw2 = h('input', { class: 'input', type: 'password', placeholder: 'Confirm it', autocomplete: 'new-password',
+    oninput: (e) => { confirm = e.target.value; } });
+
+  const localError = h('p', { class: 'gate-error', style: { display: 'none' } });
+  const showLocalError = (msg) => { localError.textContent = msg; localError.style.display = 'block'; };
+
+  const submit = () => {
+    if (!password || password.length < 4) { showLocalError('Use at least 4 characters.'); return; }
+    if (password !== confirm) { showLocalError('Those don\'t match.'); return; }
+    localError.style.display = 'none';
+    actions.gateMigrate(password);
+  };
+
+  return gateShell(
+    h('button', { class: 'gate-back', onclick: () => actions.gateGoTo('choice') }, icon('left', 15), 'Back'),
+    h('h1', {}, 'Set up your existing family'),
+    h('p', { class: 'gate-sub' },
+      'This turns what\'s already there — your family, chores, and history — into a household you own, '
+      + 'without changing or deleting any of it. You\'ll pick an owner password, same as creating fresh.'),
+    gateError(error),
+    localError,
+    h('div', { class: 'stack', style: { 'margin-top': '14px' } },
+      h('div', { class: 'field' }, h('label', {}, 'Owner password'), pw1),
+      h('div', { class: 'field' }, h('label', {}, 'Confirm'), pw2),
+      h('button', {
+        class: 'btn btn-block', disabled: busy,
+        onclick: submit,
+      }, busy ? 'Setting up…' : 'Set it up')));
+}
+
+/** Arrived via a shared join link — one tap rather than typing the code. */
+export function gateLinkConfirmView({ code, busy, error, actions }) {
+  return gateShell(
+    h('h1', {}, "You've been invited"),
+    h('p', { class: 'gate-sub' }, `Join the household using code ${code}?`),
+    gateError(error),
+    h('div', { class: 'stack', style: { 'margin-top': '18px' } },
+      h('button', {
+        class: 'btn btn-block', disabled: busy,
+        onclick: () => actions.gateJoin(code),
+      }, busy ? 'Joining…' : 'Join'),
+      h('button', { class: 'btn btn-ghost btn-block', onclick: () => actions.gateGoTo('choice') },
+        'Not this one — choose something else')));
 }
